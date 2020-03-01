@@ -134,8 +134,15 @@ export class HttpServer {
 
   async stop() {
     debug('stopping http server');
-    await this.fastifyServer.close();
     clearInterval(this.pongInteval);
+    this.closeWebSockets();
+    await this.fastifyServer.close();
+  }
+
+  closeWebSockets(){
+    (this.fastifyServer as any).websocketServer.clients.forEach((ws) => {
+      return ws.terminate();
+    });
   }
 
   sign(payload: fastify.JWTTypes.SignPayloadType, options?: SignOptions): string{
