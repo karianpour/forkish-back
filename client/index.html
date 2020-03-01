@@ -1,0 +1,79 @@
+<html>
+  <head>
+
+    <script type = "text/javascript">
+      let exampleSocket;
+  
+      function openWs(){
+        try{
+          console.log('connecting');
+          exampleSocket = new WebSocket('ws://localhost:4080/driver/ws')
+          console.log('connected');
+    
+
+          exampleSocket.onmessage = function (event) {
+            console.log('msg', {event}, event.data?.toString());
+            if(event.data==='pong'){
+              console.log('pong recieved');
+              pong.call(this);
+            }
+          }
+          exampleSocket.onopen = function (event) {
+            heartbeat.call(this);
+            console.log('open', {event});
+          }
+          exampleSocket.onclose = function (event) {
+            clearInterval(this.pingInterval);
+            console.log('close', {event});
+          }
+          exampleSocket.onerror = function (event) {
+            console.log('error', {event});
+          }
+        }catch(err){
+          console.error(err);
+        }
+      }
+  
+      function sendMsg(){
+        console.log('sending message');
+  
+        exampleSocket.send("Here's some text that the server is urgently awaiting!"); 
+      }
+  
+  
+  
+      function closeWs(){
+        console.log('closing')
+        exampleSocket.close();      
+      }
+
+      function ping() {
+        console.log('pinging');
+        this.send('ping');
+      }
+
+      function pong() {
+        this.isAlive = true;
+      }
+      function heartbeat() {
+        this.pingInterval = setInterval(() => {
+          console.log('hearbeat');
+          if(this.isAlive === false) {
+            console.log('terminating');
+            this.close();
+            clearInterval(this.pingInterval);
+          }
+          this.isAlive === false;
+          console.log('pinging');
+          this.send('ping');
+        }, 30000);
+      }
+  </script>
+  </head>
+  <body>
+    <button onclick="openWs()" >Open</button>
+    <button onclick="sendMsg()" >Send</button>
+    <button onclick="closeWs()" >Close</button>
+
+  </body>
+</html>

@@ -1,0 +1,66 @@
+{
+  "name": "4kish-back",
+  "version": "1.0.0",
+  "description": "4 Kish backend",
+  "main": "index.js",
+  "typings": "dist/index.d.ts",
+  "module": "dist/index.js",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "private": true,
+  "scripts": {
+    "build": "rm -rf ./dist && tsc --build ./tsconfig.json",
+    "start": "TS_NODE_FILES=true node --inspect=5858 -r ts-node/register ./src/index.ts",
+    "start:watch": "nodemon",
+    "build-tsc": "tsc",
+    "start-ts": "ts-node ./src/example/index.ts"
+  },
+  "nodemonConfig": {
+    "ignore": [
+      "**/*.test.ts",
+      "**/*.spec.ts",
+      ".git",
+      "node_modules"
+    ],
+    "watch": [
+      "src"
+    ],
+    "exec": "npm start",
+    "ext": "ts"
+  },
+  "engines": {
+    "node": ">=8"
+  },
+  "devDependencies": {
+    "@types/bent": "^7.0.1",
+    "@types/debug": "0.0.31",
+    "@types/dotenv": "^6.1.0",
+    "@types/http-errors": "^1.6.3",
+    "@types/node": "^12.12.24",
+    "@types/pg": "^7.14.1",
+    "@types/pg-format": "^1.0.0",
+    "@types/ws": "^7.2.2",
+    "nodemon": "^1.19.4",
+    "ts-node": "^8.6.2",
+    "typescript": "^3.7.4"
+  },
+  "dependencies": {
+    "bent": "^7.1.0",
+    "change-case": "^3.1.0",
+    "debug": "^4.1.0",
+    "dotenv": "^7.0.0",
+    "fastify": "^2.11.0",
+    "fastify-cors": "^2.2.0",
+    "fastify-file-upload": "^2.0.1",
+    "fastify-jwt": "^0.10.0",
+    "fastify-plugin": "^1.6.0",
+    "fastify-websocket": "^1.1.0",
+    "pg": "^7.17.1",
+    "pg-format": "^1.0.4",
+    "sql-bricks-postgres": "^0.5.0"
+  },
+  "author": "Kayvan Arianpour",
+  "license": "ISC"
+}
