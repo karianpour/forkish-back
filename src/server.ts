@@ -1,6 +1,6 @@
 import { HttpServer } from './services/http-server';
 import { DataService } from './services/data-service';
-import { Model, QueryBuilder } from './services/interfaces';
+import { Model, QueryBuilder, NotificationListener } from './services/interfaces';
 import * as Debug from 'debug';
 let debug = Debug('4kish-server');
 
@@ -38,6 +38,13 @@ export class Server {
     this.httpServer.registerModelRoutes(models);
     this.dataService.registerModelActions(models);
     models.forEach( model => model.setServer(this));
+  }
+
+  registerNotification(notificationListeners: NotificationListener[]) {
+    notificationListeners.forEach( notificationListener => {
+      this.dataService.registerNotificationListener(notificationListener);
+      notificationListener.setServer(this);
+    });
   }
 
   async stop() {

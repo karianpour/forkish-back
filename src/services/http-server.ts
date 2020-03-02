@@ -14,6 +14,7 @@ import { InternalServerError } from 'http-errors';
 import * as Debug from 'debug';
 import { Model } from './interfaces';
 import { SignOptions } from 'jsonwebtoken';
+import websocketPlugin = require('fastify-websocket');
 
 let debug = Debug('4kish-http-server');
 
@@ -56,9 +57,7 @@ export class HttpServer {
     this.fastifyServer.register(fastifyWebSocket, {
         handle: (conn)=>{
           debug('unhandled ws connection');
-          // conn.emit('no_implemented', ':DDDDD')
-          conn.write('hello client');
-          conn.emit('hi', 'hello client');
+          conn.socket.send('not implemented');
         },
         options: {
           maxPayload: 10 * 1024,
@@ -67,7 +66,7 @@ export class HttpServer {
 
     this.fastifyServer.decorate("authenticate", async function(request, reply) {
       try {
-        await request.jwtVerify()
+        await request.jwtVerify();
       } catch (err) {
         reply.send(err)
       }
@@ -139,7 +138,7 @@ export class HttpServer {
     await this.fastifyServer.close();
   }
 
-  closeWebSockets(){
+  private closeWebSockets(){
     (this.fastifyServer as any).websocketServer.clients.forEach((ws) => {
       return ws.terminate();
     });
@@ -147,6 +146,10 @@ export class HttpServer {
 
   sign(payload: fastify.JWTTypes.SignPayloadType, options?: SignOptions): string{
     return this.fastifyServer.jwt.sign(payload, options);
+  }
+
+  verify(token: string, options?: SignOptions): fastify.JWTTypes.VerifyPayloadType{
+    return this.fastifyServer.jwt.verify(token, options);
   }
 
   registerModelRoutes(models: Model[]){//routes: fastify.RouteOptions<Server, IncomingMessage, ServerResponse, fastify.DefaultQuery, fastify.DefaultParams, fastify.DefaultHeaders, any>[]){
@@ -169,3 +172,5 @@ export function heartbeat() {
   this.socket.isAlive = true;
   this.socket.send('pong');
 }
+
+export type WSSocket = websocketPlugin.SocketStream & { socket: {isAlive: boolean}, user: any };

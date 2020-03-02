@@ -2,49 +2,243 @@
   <head>
 
     <script type = "text/javascript">
-      let exampleSocket;
+      const url = 'http://localhost:4080';
+      const wsurl = 'ws://localhost:4080';
+      const mobile = '09121161998';
+      const verificationCode = '1234';
+
+      let driver;
+
+      driver = JSON.parse(localStorage.getItem('driver') || null);
+      console.log({driver})
+
+
+      async function fetchDriverOtp(){
+        const response = await fetch(url+'/driver/send_activation', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            mobile,
+          }),
+        });
+        const responseJson = await response.json();
+        if(responseJson.succeed){
+          console.log('sendOtp succeed');
+        }else{
+          console.log('sendOtp failed');
+        }
+      }
+
+      async function verifyDriver(state){
+        const response = await fetch(url+'/driver/verify_activation', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            mobile,
+            code: state === 'wrong' ? '4321' : state === 'nocode' ? '' : '1234',
+          }),
+        });
+        const responseJson = await response.json();
+        if(responseJson){
+          console.log('sendOtp succeed', {responseJson});
+          driver = responseJson;
+          localStorage.setItem('driver', JSON.stringify(driver));
+        }else{
+          console.log('sendOtp failed');
+        }
+      }
+
+
+      async function readDriver(){
+        const response = await fetch(url+'/driver/'+driver.id, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${driver.token}`,
+          },
+        });
+        const responseJson = await response.json();
+        if(responseJson){
+          console.log('read driver succeed', {responseJson});
+        }else{
+          console.log('read driver failed');
+        }
+      }
+
+      function handleAuthenticated(result){
+        if(result.succeed){
+          wSocket.send(JSON.stringify({
+            method: 'initialState',
+            payload: null,
+          }));
+          console.log('I got an offer');
+        }
+      }
+
+      function handleInitialState(result){
+        if(result.driverStatus){
+          console.log('I am');
+        }
+        offer = result.driverOffer;
+        rideProgress = result.rideProgress;
+      }
+
+      function handleOffer(offer){
+        window.offer = offer;
+        console.log('I got an offer');
+      }
+
+      function handleAccept(rideProgress){
+        if(!rideProgress.failed){
+          window.rideProgress = rideProgress;
+          console.log('I got a ride');
+        }
+      }
+
+
+      let wSocket;
   
-      function openWs(){
+      function openDriverWs(){
         try{
           console.log('connecting');
-          exampleSocket = new WebSocket('ws://localhost:4080/driver/ws')
+          wSocket = new WebSocket(wsurl + '/driver/ws');
           console.log('connected');
     
 
-          exampleSocket.onmessage = function (event) {
-            console.log('msg', {event}, event.data?.toString());
-            if(event.data==='pong'){
+          wSocket.onmessage = function (event) {
+            const data = event.data?.toString();
+            console.log('msg', data);
+            if(data==='pong'){
               console.log('pong recieved');
               pong.call(this);
+            }else{
+              try{
+                const json = JSON.parse(event.data);
+                if(json.method==='authenticated'){
+                  handleAuthenticated(json.payload);
+                }else if(json.method==='initialState'){
+                  handleInitialState(json.payload);
+                }else if(json.method==='offer'){
+                  handleOffer(json.payload);
+                }else if(json.method==='acceptResult'){
+                  handleAccept(json.payload);
+                }
+              }catch(err){
+                console.error(err);
+              }
             }
           }
-          exampleSocket.onopen = function (event) {
+          wSocket.onopen = function (event) {
             heartbeat.call(this);
-            console.log('open', {event});
+            console.log('open');
+            wSocket.send(JSON.stringify({
+              method: 'authenticate',
+              payload: driver.token,
+            }));
           }
-          exampleSocket.onclose = function (event) {
+          wSocket.onclose = function (event) {
             clearInterval(this.pingInterval);
-            console.log('close', {event});
+            console.log('close');
           }
-          exampleSocket.onerror = function (event) {
-            console.log('error', {event});
+          wSocket.onerror = function (event) {
+            console.log('error');
           }
         }catch(err){
           console.error(err);
         }
       }
   
-      function sendMsg(){
-        console.log('sending message');
-  
-        exampleSocket.send("Here's some text that the server is urgently awaiting!"); 
+      function sendDriverReady(){
+        console.log('sending driver ready');
+        wSocket.send(JSON.stringify({
+          method: 'ready',
+          payload: {
+            lat: 31,
+            lng: 56,
+          },
+        }));
       }
   
+      function sendAccept(){
+        console.log('sending accept');
+        wSocket.send(JSON.stringify({
+          method: 'accept',
+          payload: {
+            driverOfferId: offer.driverOfferId,
+            lat: 31,
+            lng: 56,
+          },
+        }));
+      }
   
+      function sendReject(rejectReason){
+        console.log('sending accept');
+        wSocket.send(JSON.stringify({
+          method: 'reject',
+          payload: {
+            driverOfferId: offer.driverOfferId,
+            lat: 31,
+            lng: 56,
+            rejectReason,
+          },
+        }));
+      }
   
-      function closeWs(){
+      function sendArrived(){
+        console.log('sending accept');
+        wSocket.send(JSON.stringify({
+          method: 'arrived',
+          payload: {
+            rideProgressId: rideProgress.rideProgressId,
+            lat: 31,
+            lng: 56,
+          },
+        }));
+      }
+  
+      function sendBoarded(){
+        console.log('sending accept');
+        wSocket.send(JSON.stringify({
+          method: 'boarded',
+          payload: {
+            rideProgressId: rideProgress.rideProgressId,
+            lat: 31,
+            lng: 56,
+          },
+        }));
+      }
+  
+      function sendLeft(){
+        console.log('sending accept');
+        wSocket.send(JSON.stringify({
+          method: 'left',
+          payload: {
+            rideProgressId: rideProgress.rideProgressId,
+            lat: 31,
+            lng: 56,
+          },
+        }));
+      }
+  
+      function sendCancel(){
+        console.log('sending accept');
+        wSocket.send(JSON.stringify({
+          method: 'cancel',
+          payload: {
+            rideProgressId: rideProgress.rideProgressId,
+            lat: 31,
+            lng: 56,
+          },
+        }));
+      }
+  
+      function closeDriverWs(){
         console.log('closing')
-        exampleSocket.close();      
+        wSocket.close();      
       }
 
       function ping() {
@@ -55,6 +249,7 @@
       function pong() {
         this.isAlive = true;
       }
+
       function heartbeat() {
         this.pingInterval = setInterval(() => {
           console.log('hearbeat');
@@ -71,9 +266,24 @@
   </script>
   </head>
   <body>
-    <button onclick="openWs()" >Open</button>
-    <button onclick="sendMsg()" >Send</button>
-    <button onclick="closeWs()" >Close</button>
+    <button onclick="fetchDriverOtp()" >driver otp</button>
+    <button onclick="verifyDriver('wrong')" >driver wrong verify</button>
+    <button onclick="verifyDriver('nocode')" >driver empty verify</button>
+    <button onclick="verifyDriver()" >driver verify</button>
+    <button onclick="readDriver()" >read driver</button>
+    <br/>
+    <br/>
+    <button onclick="openDriverWs()" >driver open ws</button>
+    <button onclick="sendDriverReady()" >driver send ready ws</button>
+    <button onclick="sendAccept()" >send accept ws</button>
+    <button onclick="sendReject('cheap')" >send reject cheap ws</button>
+    <button onclick="sendReject('far')" >send reject far ws</button>
+    <button onclick="sendReject('misc')" >send reject misc ws</button>
+    <button onclick="sendArrived()" >send arrived ws</button>
+    <button onclick="sendBoarded()" >send boarded ws</button>
+    <button onclick="sendLeft()" >send left ws</button>
+    <button onclick="sendCancel()" >send cancel ws</button>
+    <button onclick="closeDriverWs()" >driver close ws</button>
 
   </body>
 </html>

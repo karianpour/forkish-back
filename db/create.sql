@@ -107,6 +107,15 @@ create table log.action_log (
   created_at timestamptz not null default now()
 );
 
+create table log.jwt (
+  id bigserial primary key not null,
+  entity_id uuid not null,
+  entity log.entity_types_enum not null,
+  jwt text not null,
+  created_at timestamptz not null default now(),
+  invalidated_at timestamptz null
+);
+
 create table pbl.driver (
   id uuid primary key not null,
   mobile pbl.mobile_number not null unique,
@@ -196,7 +205,7 @@ create table ride.passenger_request (
   pickup pbl.location not null,
   destination pbl.location not null,
   car_type pbl.car_type_enum not null,
-  price numeric(5, 2),
+  price numeric(10, 2),
   distance real,
   time real,
   requested_at timestamptz not null
@@ -211,7 +220,7 @@ create type pbl.driver_response_enum as enum (
   'accepted',
   'rejected_cheap',
   'rejected_far',
-  'rejected_other',
+  'rejected_misc',
   'timedout'
 );
 
@@ -219,9 +228,11 @@ create table ride.driver_offer (
   id uuid primary key not null,
   driver_id uuid not null references pbl.driver (id),
   passenger_request_id uuid not null references ride.passenger_request (id),
-  driver_point public.geometry(point, 4326) not null,
-  driver_response pbl.driver_response_enum not null,
-  offered_at timestamptz not null
+  offered_at timestamptz not null,
+  driver_point public.geometry(point, 4326) null,
+  driver_response pbl.driver_response_enum null,
+  driver_responsed_at timestamptz null,
+  expired_at timestamptz null
 );
 
 create table archive.driver_offer_archive (

@@ -8,7 +8,7 @@ const smsService = {
   ApiKey: process.env.SMS_ApiKey,
   SecretKey: process.env.SMS_SecretKey,
   ForgetPassTemplateId: process.env.SMS_ForgetPassTemplateId,
-  SendIgnore: process.env.SMS_SendIgnore,
+  SendIgnore: process.env.SMS_SendIgnore === 'true',
 }
 
 const requestForTocken = bent(

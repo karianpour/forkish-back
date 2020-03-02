@@ -1,5 +1,5 @@
 import { Server } from "../server";
-import { Model, RouteOptions } from "../services/interfaces";
+import { Model, RouteOptions, NotificationListener } from "../services/interfaces";
 import { PoolClient } from "pg";
 import { HTTPMethod, FastifyRequest } from "fastify";
 import { addFailureForBanned, checkForBanned } from '../services/banned';
@@ -12,8 +12,7 @@ import * as sql from 'sql-bricks-postgres';
 import * as Debug from 'debug';
 import { snakeCasedFields } from "../utils/dbUtils";
 import { sendActivationSMS } from "../services/sms";
-import websocketPlugin = require("fastify-websocket");
-import { heartbeat } from "../services/http-server";
+import { heartbeat, WSSocket } from "../services/http-server";
  
 let debug = Debug('4kish-driver');
 
@@ -24,13 +23,30 @@ const fields: string[] = snakeCasedFields([
   'mobile',
   'firstname',
   'lastname',
-  'title',
-  'email',
-  'extendedData',
+  'firstnameEn',
+  'lastnameEn',
+  'photoUrl',
+]);
+
+const rideProgressFields: string[] = snakeCasedFields([
+  'id',
+  'passengerRequestId',
+  'driverId',
+  'driverArrivedAt',
+  'driverArrivedPoint',
+  'passengerOnboardAt',
+  'passengerOnboardPoint',
+  'passengerLeftAt',
+  'passengerLeftPoint',
+  'driverCanceledAt',
+  'driverCanceledPoint',
+  'passengerCanceledAt',
+  'passengerCanceledPoint',
 ]);
 
 class Driver implements Model {
   private server: Server;
+  private drivers: Map<string, WSSocket> = new Map();
 
   setServer(s: Server) { this.server = s; }
 
@@ -65,7 +81,7 @@ class Driver implements Model {
       schema: {
       },
       handler: () => {},
-      wsHandler: this.handleWs, 
+      wsHandler: this.handleWs.bind(this),
     }];
   }
 
@@ -83,6 +99,46 @@ class Driver implements Model {
         address: () => '/verifyActivation',
         public: true,
         act: this.actVerifyActivation,
+      },{
+        address: () => '/initialState',
+        public: false,
+        act: this.actInitialState,
+      },{
+        address: () => '/ready',
+        public: false,
+        act: this.actReady,
+      },{
+        address: () => '/off',
+        public: false,
+        act: this.actOff,
+      },{
+        address: () => '/accept',
+        public: false,
+        act: this.actAccept,
+      },{
+        address: () => '/arrived',
+        public: false,
+        act: this.actArrived,
+      },{
+        address: () => '/boarded',
+        public: false,
+        act: this.actBoarded,
+      },{
+        address: () => '/left',
+        public: false,
+        act: this.actLeft,
+      },{
+        address: () => '/reject',
+        public: false,
+        act: this.actReject,
+      },{
+        address: () => '/cancel',
+        public: false,
+        act: this.actCancel,
+      },{
+        address: () => '/offer',
+        public: true,
+        act: this.actOffer,
       },
     ]
   }
@@ -125,13 +181,8 @@ class Driver implements Model {
       mobile,
     };
 
-    const result = await this.server.getDataService().act(this.address()+'/sendActivation', actionParam);
-    if(result){
-      const driver = result;
-      driver.token = this.server.getHttpServer().sign({ id: driver.id, roles: driver.roles });
-      reply.send(driver);
-      return;
-    }
+    await this.server.getDataService().act(this.address()+'/sendActivation', actionParam);
+    reply.send({ succeed: true });
   }
 
   actSendActivation = async (client: PoolClient, actionParam: any) => {
@@ -149,7 +200,7 @@ class Driver implements Model {
     const driverResult = await client.query(query);
 
     const driver = driverResult.rows.length === 0 ? null : camelCaseObject(driverResult.rows[0]);
-    if(!driver) return;
+    if(!driver) return true;
 
 
     const code = '1234';
@@ -158,16 +209,16 @@ class Driver implements Model {
       text: `
         insert into pbl.driver_otp (
           driver_id, code, created_at, activation_failed_count, activated, used
-        ) values ($1, $2, now(), 0, false, false)
-        returning ${fields};
+        ) values ($1, $2, now(), 0, false, false);
       `,
       values: [ driver.id, code ],
     });
 
     if(result.rowCount === 1){
       sendActivationSMS(driver.mobile, code);
-      // TODO send SMS to the client, till then the code is 1234
     }
+
+    return true;
   }
 
   handleVerifyActivation = async (request, reply) => {
@@ -187,9 +238,7 @@ class Driver implements Model {
 
     const result = await this.server.getDataService().act(this.address()+'/verifyActivation', actionParam);
     if(result){
-      const driver = result;
-      driver.token = this.server.getHttpServer().sign({ id: driver.id, roles: ['driver'] });
-      reply.send(driver);
+      reply.send(result);
     }
     addFailureForBanned(realIp);
     await pause(500);//this pause is to make the hacker life harder for brute-force attack
@@ -209,10 +258,10 @@ class Driver implements Model {
     {
       const result = await client.query({
         text: `
-          select do.id, do.code, do.activation_failed_count
-          from driver d
-          inner join driver_otp do
-          where !used and do.mobile = $1;
+          select otp.id, otp.driver_id, otp.code, otp.activation_failed_count
+          from pbl.driver d
+          inner join pbl.driver_otp otp on d.id = otp.driver_id
+          where not used and d.mobile = $1;
         `,
         values: [ mobile ],
       });
@@ -220,42 +269,843 @@ class Driver implements Model {
       if(result.rows.length === 0){
         return false;
       }
-      const otp = result.rows[0];
+      const otp = camelCaseObject(result.rows[0]);
       if(otp.code === code){
         const result = await client.query({
           text: `
-            update driver_otp set used = true, activated = true, used_at = now()
+            update pbl.driver_otp set used = true, activated = true, used_at = now()
             where id = $1 and code = $2
             returning activated;
           `,
           values: [ otp.id, code ],
         });
-    
+      
         if(result.rows.length > 0){
-          return result.rows[0].activated;
+          if (result.rows[0].activated){
+            let driver: any;
+            {
+              let select = sql.select(...(fields.map(f => 'a.'+f)));
+              select = select.from('pbl.driver a');
+              select = select.where({id: otp.driverId});
+          
+              const query = select.toParams();
+          
+              const result = await client.query(query);
+              driver = camelCaseObject(result.rows[0]);
+            }
+            
+            driver.token = this.server.getHttpServer().sign({ id: driver.id, roles: ['driver'] });
+            {
+              await client.query({
+                text: `
+                  insert into log.jwt (
+                    entity_id, entity, jwt, created_at
+                  ) values ($1, 'driver', $2, now());
+                `,
+                values: [ driver.id, driver.token ],
+              });
+            }
+            return driver;
+          }
         }
       }else{
         const result = await client.query({
           text: `
-            update driver_otp set activation_failed_count = activation_failed_count + 1, used = (activation_failed_count + 1) > 3, used_at = now()
+            update pbl.driver_otp set activation_failed_count = activation_failed_count + 1, used = (activation_failed_count + 1) > 3, used_at = now()
             where id = $1
             returning activation_failed_count;
           `,
           values: [ otp.id ],
         });
     
-        if(result.rows.length > 0){
-          if(result.rows[0].activation_failed_count > 3){
-            throwError('activationCode', 'expired', 'activationCode is expired!', 'auth.activationCode');
-          }
-        }
+        // if(result.rows.length > 0){
+        //   if(result.rows[0].activation_failed_count > 3){
+        //     throwError('activationCode', 'expired', 'activationCode is expired!', 'auth.activationCode');
+        //   }
+        // }
       }
     }
 
     return false;
   }
 
-  handleWs(conn: websocketPlugin.SocketStream & { socket: {isAlive: boolean} },
+  handleAuthenticate(token: any, conn: WSSocket) {
+    const jwt = this.server.getHttpServer().verify(token) as any;
+    //TODO we have to check it on database if the token is still available
+    if(jwt.id && jwt.roles && jwt.roles.indexOf('driver')!==-1){
+      conn.user = jwt;
+      this.drivers.set(jwt.id, conn);
+      conn.socket.send(JSON.stringify({
+        method: 'authenticated',
+        payload: {
+          succeed: true,
+        },
+      }));
+    }else{
+      conn.socket.terminate();
+    }
+  }
+
+  handleClose(conn: WSSocket) {
+    if(conn.user?.id){
+      this.drivers.delete(conn.user.id);
+    }
+  }
+
+  async handleInitialState(payload: any, conn: WSSocket) {
+    try{
+      const result = await this.server.getDataService().act(this.address()+'/initialState', payload, conn.user);
+      conn.socket.send(JSON.stringify({
+        method: 'initialState',
+        payload: result,
+      }));
+    }catch(err){
+      debug(err);
+      conn.socket.send(JSON.stringify({
+        method: 'initialState',
+        payload: {
+          failed: true,
+        },
+      }));
+    }
+  }
+
+  actInitialState = async (client: PoolClient, actionParam: any, driver: any) => {
+    let driverStatus;
+    {
+      const result = await client.query({
+        text: `
+          select ds.status
+          from ride.driver_status ds
+          where ds.driver_id = $1;
+        `,
+        values: [ driver.id ],
+      });
+      if(result.rows.length) {
+        driverStatus = camelCaseObject(result.rows[0]);
+      };
+    }
+    let driverOffer;
+    {
+      const result = await client.query({
+        text: `
+          select o.id as driver_offer_id
+          from ride.driver_offer o
+          where o.driver_id = $1;
+        `,
+        values: [ driver.id ],
+      });
+      if(result.rows.length) {
+        driverOffer = camelCaseObject(result.rows[0]);
+      };
+    }
+    let rideProgress;
+    {
+      const result = await client.query({
+        text: `
+          select rp.id as ride_progress_id
+          from ride.ride_progress rp
+          where rp.driver_id = $1;
+        `,
+        values: [ driver.id ],
+      });
+      if(result.rows.length) {
+        rideProgress = camelCaseObject(result.rows[0]);
+      };
+    }
+    return {
+      driverStatus,
+      driverOffer,
+      rideProgress,
+    };
+  }
+
+  async handleReady(payload: any, conn: WSSocket) {
+    try{
+      const result = await this.server.getDataService().act(this.address()+'/ready', payload, conn.user);
+      conn.socket.send(JSON.stringify({
+        method: 'readyResult',
+        payload: result,
+      }));
+    }catch(err){
+      debug(err);
+      conn.socket.send(JSON.stringify({
+        method: 'readyResult',
+        payload: {
+          failed: true,
+        },
+      }));
+    }
+  }
+
+  actReady = async (client: PoolClient, actionParam: any, driver: any) => {
+    const { lat, lng } = actionParam;
+
+    if (!lat) {
+      throwError('lat', 'required', 'lat is missing!', 'pbl.lat');
+    }
+    if (!lng) {
+      throwError('lng', 'required', 'lng is missing!', 'pbl.lng');
+    }
+
+    {
+      // const result = await client.query({
+      //   text: `
+      //     select do.id, do.code, do.activation_failed_count
+      //     from driver d
+      //     inner join driver_otp do
+      //     where !used and do.mobile = $1;
+      //   `,
+      //   values: [ mobile ],
+      // });
+
+      // if(result.rows.length === 0){
+      //   return false;
+      // }
+      await client.query({
+        text: `
+          insert into log.driver_signal (driver_id, point, status, occured_at)
+            values ($1, public.ST_SetSRID( public.ST_Point( $3, $2), 4326), $4, now());
+        `,
+        values: [ driver.id, lat, lng, 'ready' ],
+      });
+      await client.query({
+        text: `
+          insert into ride.driver_status (driver_id, point, status)
+            values ($1, public.ST_SetSRID( public.ST_Point( $3, $2), 4326), $4)
+            on conflict (driver_id) do update set
+            point = excluded.point, status = excluded.status;
+        `,
+        values: [ driver.id, lat, lng, 'ready' ],
+      });
+  
+    }
+    return true;
+  }
+
+  async handleOff(payload: any, conn: WSSocket) {
+    try{
+      const result = await this.server.getDataService().act(this.address()+'/off', payload, conn.user);
+      conn.socket.send(JSON.stringify({
+        method: 'offResult',
+        payload: result,
+      }));
+    }catch(err){
+      debug(err);
+      conn.socket.send(JSON.stringify({
+        method: 'offResult',
+        payload: {
+          failed: true,
+        },
+      }));
+    }
+  }
+
+  actOff = async (client: PoolClient, actionParam: any, driver: any) => {
+    const { lat, lng } = actionParam;
+
+    if (!lat) {
+      throwError('lat', 'required', 'lat is missing!', 'pbl.lat');
+    }
+    if (!lng) {
+      throwError('lng', 'required', 'lng is missing!', 'pbl.lng');
+    }
+
+    {
+      // const result = await client.query({
+      //   text: `
+      //     select do.id, do.code, do.activation_failed_count
+      //     from driver d
+      //     inner join driver_otp do
+      //     where !used and do.mobile = $1;
+      //   `,
+      //   values: [ mobile ],
+      // });
+
+      // if(result.rows.length === 0){
+      //   return false;
+      // }
+      await client.query({
+        text: `
+          insert into log.driver_signal (driver_id, point, status, occured_at)
+            values ($1, public.ST_SetSRID( public.ST_Point( $3, $2), 4326), $4, now());
+        `,
+        values: [ driver.id, lat, lng, 'off' ],
+      });
+      await client.query({
+        text: `
+          insert into ride.driver_status (driver_id, point, status)
+            values ($1, public.ST_SetSRID( public.ST_Point( $3, $2), 4326), $4)
+            on conflict (driver_id) do update set
+            point = excluded.point, status = excluded.status;
+        `,
+        values: [ driver.id, lat, lng, 'off' ],
+      });
+  
+    }
+    return true;
+  }
+
+  async handleAccept(payload: any, conn: WSSocket) {
+    try{
+      const result = await this.server.getDataService().act(this.address()+'/accept', payload, conn.user);
+      conn.socket.send(JSON.stringify({
+        method: 'acceptResult',
+        payload: !result ? {
+          failed: true,
+        } : result,
+      }));
+    }catch(err){
+      debug(err);
+      conn.socket.send(JSON.stringify({
+        method: 'acceptResult',
+        payload: {
+          failed: true,
+        },
+      }));
+    }
+  }
+
+  actAccept = async (client: PoolClient, actionParam: any, driver: any) => {
+    const { driverOfferId, lat, lng } = actionParam;
+
+    if (!driver?.id) {
+      throwError('driverId', 'required', 'driverId is missing!', 'pbl.driverId');
+    }
+    if (!driverOfferId) {
+      throwError('driverOfferId', 'required', 'driverOfferId is missing!', 'pbl.driverOfferId');
+    }
+    if (!lat) {
+      throwError('lat', 'required', 'lat is missing!', 'pbl.lat');
+    }
+    if (!lng) {
+      throwError('lng', 'required', 'lng is missing!', 'pbl.lng');
+    }
+
+    const rideProgressId = driverOfferId;
+    {
+      let driverOffer;
+      {
+        const lockResult = await client.query({
+          text: `
+            select id
+            from ride.driver_offer
+            where passenger_request_id = (
+              select passenger_request_id
+              from ride.driver_offer
+              where id = $1
+            )
+            for update;
+          `,
+          values: [ driverOfferId ],
+        });
+        if(lockResult.rowCount===0){
+          return false;
+        }
+
+        const result = await client.query({
+          text: `
+            select driver_id, passenger_request_id, driver_response, expired_at
+            from ride.driver_offer
+            where id = $1;
+          `,
+          values: [ driverOfferId ],
+        });
+  
+        if(result.rows.length === 0){
+          return false;
+        }
+        driverOffer = camelCaseObject(result.rows[0]);
+        if(
+          driverOffer.driverResponse != null
+          || driverOffer.expiredAt != null
+          || driverOffer.driverId != driver.id
+        ){
+          return false;
+        }
+      }
+
+      await client.query({
+        text: `
+          update ride.driver_offer set (driver_point, driver_response, driver_responsed_at)
+            = (public.ST_SetSRID( public.ST_Point( $4, $3), 4326), $5, now())
+          where driver_id = $1 and id = $2;
+        `,
+        values: [ driver.id, driverOfferId, lat, lng, 'accepted' ],
+      });
+      await client.query({
+        text: `
+          update ride.driver_offer set expired_at = now()
+          where passenger_request_id = $1 and id != $2
+            and expired_at is null and driver_response is null;
+        `,
+        values: [ driverOffer.passengerRequestId, driverOfferId ],
+      });
+      await client.query({
+        text: `
+          insert into ride.driver_status (driver_id, point, status)
+            values ($1, public.ST_SetSRID( public.ST_Point( $3, $2), 4326), $4)
+            on conflict (driver_id) do update set
+            point = excluded.point, status = excluded.status;
+        `,
+        values: [ driver.id, lat, lng, 'occupied' ],
+      });
+      await client.query({
+        text: `
+          insert into ride.ride_progress (id, passenger_request_id, driver_id)
+            values ($1, $2, $3);
+        `,
+        values: [ rideProgressId, driverOffer.passengerRequestId, driver.id ],
+      });
+  
+    }
+    return {
+      rideProgressId
+    };
+  }
+
+  async handleReject(payload: any, conn: WSSocket) {
+    try{
+      const result = await this.server.getDataService().act(this.address()+'/reject', payload, conn.user);
+      conn.socket.send(JSON.stringify({
+        method: 'rejectResult',
+        payload: result,
+      }));
+    }catch(err){
+      debug(err);
+      conn.socket.send(JSON.stringify({
+        method: 'rejectResult',
+        payload: {
+          failed: true,
+        },
+      }));
+    }
+  }
+
+  actReject = async (client: PoolClient, actionParam: any, driver: any) => {
+    const { driverOfferId, lat, lng, rejectReason } = actionParam;
+
+    if (!driver?.id) {
+      throwError('driverId', 'required', 'driverId is missing!', 'pbl.driverId');
+    }
+    if (!driverOfferId) {
+      throwError('driverOfferId', 'required', 'driverOfferId is missing!', 'pbl.driverOfferId');
+    }
+    if (!lat) {
+      throwError('lat', 'required', 'lat is missing!', 'pbl.lat');
+    }
+    if (!lng) {
+      throwError('lng', 'required', 'lng is missing!', 'pbl.lng');
+    }
+    if (!rejectReason) {
+      throwError('rejectReason', 'required', 'rejectReason is missing!', 'pbl.rejectReason');
+    }
+    if (rejectReason && RejectReasonEnum.indexOf(rejectReason)===-1 ) {
+      throwError('rejectReason', 'unacceptable', `rejectReason '${rejectReason}' is not acceptable!`, 'pbl.rejectReason');
+    }
+
+    {
+      let driverOffer;
+      {
+        const result = await client.query({
+          text: `
+            select driver_id, passenger_request_id, driver_response, expired_at
+            from ride.driver_offer
+            where id = $1
+            for update;
+          `,
+          values: [ driverOfferId ],
+        });
+  
+        if(result.rows.length === 0){
+          return false;
+        }
+        driverOffer = camelCaseObject(result.rows[0]);
+        if(
+          driverOffer.driverResponse != null
+          || driverOffer.expiredAt != null
+          || driverOffer.driverId != driver.id
+        ){
+          return false;
+        }
+      }
+
+      const result = await client.query({
+        text: `
+          update ride.driver_offer set (driver_point, driver_response, driver_responsed_at)
+            = (public.ST_SetSRID( public.ST_Point( $4, $3), 4326), $5, now())
+          where driver_id = $1 and id = $2
+          ;
+        `,
+        values: [ driver.id, driverOfferId, lat, lng, `rejected_${rejectReason}` ],
+      });
+      if(result.rowCount===0){
+        return false;
+      }
+  
+    }
+    return true;
+  }
+
+  async handleCancel(payload: any, conn: WSSocket) {
+    try{
+      const result = await this.server.getDataService().act(this.address()+'/cancel', payload, conn.user);
+      conn.socket.send(JSON.stringify({
+        method: 'cancelResult',
+        payload: result,
+      }));
+    }catch(err){
+      debug(err);
+      conn.socket.send(JSON.stringify({
+        method: 'cancelResult',
+        payload: {
+          failed: true,
+        },
+      }));
+    }
+  }
+
+  actCancel = async (client: PoolClient, actionParam: any, driver: any) => {
+    const { rideProgressId, lat, lng } = actionParam;
+
+    if (!driver?.id) {
+      throwError('driverId', 'required', 'driverId is missing!', 'pbl.driverId');
+    }
+    if (!rideProgressId) {
+      throwError('rideProgressId', 'required', 'rideProgressId is missing!', 'pbl.rideProgressId');
+    }
+    if (!lat) {
+      throwError('lat', 'required', 'lat is missing!', 'pbl.lat');
+    }
+    if (!lng) {
+      throwError('lng', 'required', 'lng is missing!', 'pbl.lng');
+    }
+
+    {
+      let rideProgress;
+      {
+        const result = await client.query({
+          text: `
+            select ${rideProgressFields.join(', ')}
+            from ride.ride_progress
+            where id = $1
+            for update;
+          `,
+          values: [ rideProgressId ],
+        });
+  
+        if(result.rows.length === 0){
+          return false;
+        }
+        rideProgress = camelCaseObject(result.rows[0]);
+        if(
+          rideProgress.driverId != driver.id
+          || rideProgress.passengerLeftAt !== null
+          || rideProgress.driverCanceledAt !== null
+          || rideProgress.passengerCanceledAt !== null
+        ){
+          return false;
+        }
+      }
+
+      const result = await client.query({
+        text: `
+          update ride.ride_progress set (driver_canceled_at, driver_canceled_point)
+            = (now(), public.ST_SetSRID( public.ST_Point( $3, $2), 4326))
+          where id = $1
+          ;
+        `,
+        values: [ rideProgress.id, lat, lng ],
+      });
+
+      if(result.rowCount===0){
+        return false;
+      }
+
+      await client.query({
+        text: `
+          insert into ride.driver_status (driver_id, point, status)
+            values ($1, public.ST_SetSRID( public.ST_Point( $3, $2), 4326), $4)
+            on conflict (driver_id) do update set
+            point = excluded.point, status = excluded.status;
+        `,
+        values: [ driver.id, lat, lng, 'ready' ],
+      });
+      
+    }
+    return true;
+  }
+
+  async handleArrived(payload: any, conn: WSSocket) {
+    try{
+      const result = await this.server.getDataService().act(this.address()+'/arrived', payload, conn.user);
+      conn.socket.send(JSON.stringify({
+        method: 'arrivedResult',
+        payload: result,
+      }));
+    }catch(err){
+      debug(err);
+      conn.socket.send(JSON.stringify({
+        method: 'arrivedResult',
+        payload: {
+          failed: true,
+        },
+      }));
+    }
+  }
+
+  actArrived = async (client: PoolClient, actionParam: any, driver: any) => {
+    const { rideProgressId, lat, lng } = actionParam;
+
+    if (!driver?.id) {
+      throwError('driverId', 'required', 'driverId is missing!', 'pbl.driverId');
+    }
+    if (!rideProgressId) {
+      throwError('rideProgressId', 'required', 'rideProgressId is missing!', 'pbl.rideProgressId');
+    }
+    if (!lat) {
+      throwError('lat', 'required', 'lat is missing!', 'pbl.lat');
+    }
+    if (!lng) {
+      throwError('lng', 'required', 'lng is missing!', 'pbl.lng');
+    }
+
+    {
+      let rideProgress;
+      {
+        const result = await client.query({
+          text: `
+            select ${rideProgressFields.join(', ')}
+            from ride.ride_progress
+            where id = $1
+            for update;
+          `,
+          values: [ rideProgressId ],
+        });
+  
+        if(result.rows.length === 0){
+          return false;
+        }
+        rideProgress = camelCaseObject(result.rows[0]);
+        if(
+          rideProgress.driverId != driver.id
+          || rideProgress.driverArrivedAt !== null
+          || rideProgress.passengerLeftAt !== null
+          || rideProgress.driverCanceledAt !== null
+          || rideProgress.passengerCanceledAt !== null
+        ){
+          return false;
+        }
+      }
+
+      const result = await client.query({
+        text: `
+          update ride.ride_progress set (driver_arrived_at, driver_arrived_point)
+            = (now(), public.ST_SetSRID( public.ST_Point( $3, $2), 4326))
+          where id = $1
+          ;
+        `,
+        values: [ rideProgress.id, lat, lng ],
+      });
+
+      if(result.rowCount===0){
+        return false;
+      }
+  
+    }
+    return true;
+  }
+
+
+  async handleBoarded(payload: any, conn: WSSocket) {
+    try{
+      const result = await this.server.getDataService().act(this.address()+'/boarded', payload, conn.user);
+      conn.socket.send(JSON.stringify({
+        method: 'boardedResult',
+        payload: result,
+      }));
+    }catch(err){
+      debug(err);
+      conn.socket.send(JSON.stringify({
+        method: 'boardedResult',
+        payload: {
+          failed: true,
+        },
+      }));
+    }
+  }
+
+  actBoarded = async (client: PoolClient, actionParam: any, driver: any) => {
+    const { rideProgressId, lat, lng } = actionParam;
+
+    if (!driver?.id) {
+      throwError('driverId', 'required', 'driverId is missing!', 'pbl.driverId');
+    }
+    if (!rideProgressId) {
+      throwError('rideProgressId', 'required', 'rideProgressId is missing!', 'pbl.rideProgressId');
+    }
+    if (!lat) {
+      throwError('lat', 'required', 'lat is missing!', 'pbl.lat');
+    }
+    if (!lng) {
+      throwError('lng', 'required', 'lng is missing!', 'pbl.lng');
+    }
+
+    {
+      let rideProgress;
+      {
+        const result = await client.query({
+          text: `
+            select ${rideProgressFields.join(', ')}
+            from ride.ride_progress
+            where id = $1
+            for update;
+          `,
+          values: [ rideProgressId ],
+        });
+  
+        if(result.rows.length === 0){
+          return false;
+        }
+        rideProgress = camelCaseObject(result.rows[0]);
+        if(
+          rideProgress.driverId != driver.id
+          || rideProgress.driverArrivedAt === null
+          || rideProgress.passengerOnboardAt !== null
+          || rideProgress.passengerLeftAt !== null
+          || rideProgress.driverCanceledAt !== null
+          || rideProgress.passengerCanceledAt !== null
+        ){
+          return false;
+        }
+      }
+
+      const result = await client.query({
+        text: `
+          update ride.ride_progress set (passenger_onboard_at, passenger_onboard_point)
+            = (now(), public.ST_SetSRID( public.ST_Point( $3, $2), 4326))
+          where id = $1
+          ;
+        `,
+        values: [ rideProgress.id, lat, lng ],
+      });
+
+      if(result.rowCount===0){
+        return false;
+      }
+  
+    }
+    return true;
+  }
+
+
+  async handleLeft(payload: any, conn: WSSocket) {
+    try{
+      const result = await this.server.getDataService().act(this.address()+'/left', payload, conn.user);
+      conn.socket.send(JSON.stringify({
+        method: 'leftResult',
+        payload: result,
+      }));
+    }catch(err){
+      debug(err);
+      conn.socket.send(JSON.stringify({
+        method: 'leftResult',
+        payload: {
+          failed: true,
+        },
+      }));
+    }
+  }
+
+  actLeft = async (client: PoolClient, actionParam: any, driver: any) => {
+    const { rideProgressId, lat, lng } = actionParam;
+
+    if (!driver?.id) {
+      throwError('driverId', 'required', 'driverId is missing!', 'pbl.driverId');
+    }
+    if (!rideProgressId) {
+      throwError('rideProgressId', 'required', 'rideProgressId is missing!', 'pbl.rideProgressId');
+    }
+    if (!lat) {
+      throwError('lat', 'required', 'lat is missing!', 'pbl.lat');
+    }
+    if (!lng) {
+      throwError('lng', 'required', 'lng is missing!', 'pbl.lng');
+    }
+
+    {
+      let rideProgress;
+      {
+        const result = await client.query({
+          text: `
+            select ${rideProgressFields.join(', ')}
+            from ride.ride_progress
+            where id = $1
+            for update;
+          `,
+          values: [ rideProgressId ],
+        });
+  
+        if(result.rows.length === 0){
+          return false;
+        }
+        rideProgress = camelCaseObject(result.rows[0]);
+        if(
+          rideProgress.driverId != driver.id
+          || rideProgress.driverArrivedAt === null
+          || rideProgress.passengerOnboardAt === null
+          || rideProgress.passengerLeftAt !== null
+          || rideProgress.driverCanceledAt !== null
+          || rideProgress.passengerCanceledAt !== null
+        ){
+          return false;
+        }
+      }
+
+      const result = await client.query({
+        text: `
+          update ride.ride_progress set (passenger_left_at, passenger_left_point)
+            = (now(), public.ST_SetSRID( public.ST_Point( $3, $2), 4326))
+          where id = $1
+          ;
+        `,
+        values: [ rideProgress.id, lat, lng ],
+      });
+
+      if(result.rowCount===0){
+        return false;
+      }
+  
+      await client.query({
+        text: `
+          insert into ride.driver_status (driver_id, point, status)
+            values ($1, public.ST_SetSRID( public.ST_Point( $3, $2), 4326), $4)
+            on conflict (driver_id) do update set
+            point = excluded.point, status = excluded.status;
+        `,
+        values: [ driver.id, lat, lng, 'ready' ],
+      });
+
+    }
+    return true;
+  }
+
+  actOffer = async (client: PoolClient, actionParam: any) => {
+    const { driverId, driverOfferId } = actionParam;
+
+
+    const conn = this.drivers.get(driverId);
+    if(!conn) return;
+
+    conn.socket.send(JSON.stringify({
+      method: 'offer',
+      payload: {
+        driverOfferId,
+      },
+  }));
+  }
+
+  handleWs(conn: WSSocket,
     request: FastifyRequest,
     params?: { [key: string]: any }
   ){
@@ -267,19 +1117,91 @@ class Driver implements Model {
       debug(data);
       if(data==='ping'){
         heartbeat.call(conn);
+        return;
+      }
+      try{
+        const json = JSON.parse(data);
+        const {method, payload} = json;
+        if(!method){
+          debug('error on json, no method defined.', data);
+          return;
+        }
+        if(method==='authenticate'){
+          this.handleAuthenticate(payload, conn);
+        }else {
+          if(!conn.user){
+            conn.socket.send('authentication required!');
+          }else if(method==='initialState'){
+            this.handleInitialState(payload, conn);
+          }else if(method==='ready'){
+            this.handleReady(payload, conn);
+          }else if(method==='off'){
+            this.handleOff(payload, conn);
+          }else if(method==='accept'){
+            this.handleAccept(payload, conn);
+          }else if(method==='arrived'){
+            this.handleArrived(payload, conn);
+          }else if(method==='boarded'){
+            this.handleBoarded(payload, conn);
+          }else if(method==='left'){
+            this.handleLeft(payload, conn);
+          }else if(method==='reject'){
+            this.handleReject(payload, conn);
+          }else if(method==='cancel'){
+            this.handleCancel(payload, conn);
+          }
+        }
+        
+      }catch(err){
+        debug('error parsing json', data, err);
+        return;
       }
     });
     conn.on('close', ()=>{
       debug('closed');
+      this.handleClose(conn);
+    });
+    conn.on('end', ()=>{
+      debug('end');
+      this.handleClose(conn);
     });
     conn.on('error', (err)=>{
       debug('error');
       debug(err);
     });
   }
+
+}
+class DriverOfferListener implements NotificationListener{
+  private server: Server;
+
+  setServer(s: Server) { this.server = s; }
+  channel = 'driver_offer';
+
+  callback(payloadStr?: string){
+    const payload = JSON.parse(payloadStr);
+    const {driverId, driverOfferId} = payload;
+    if(!driverId || !driverOfferId) return;
+    const actionParam = {
+      driverId,
+      driverOfferId,
+    }
+    this.server.getDataService().act('/driver/offer', actionParam);
+  }
+
+
 }
 
 export const models: Model[] = [ 
   new Driver(),
 ];
 
+export const notifications: NotificationListener[] = [
+  new DriverOfferListener(),
+];
+
+const RejectReasonEnum = [
+  'cheap',
+  'far',
+  'misc',
+];

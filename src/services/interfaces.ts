@@ -30,3 +30,9 @@ export interface Model {
   actions: ModelActionFunction,
   setServer: (server: ForKishServer) => void,
 }
+
+export type NotificationListener = {
+  channel: string,
+  callback: (payload?:string)=>void,
+  setServer: (server: ForKishServer) => void,
+}

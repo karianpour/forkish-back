@@ -1,7 +1,7 @@
-import {Pool, PoolConfig, PoolClient, types} from 'pg';
+import {Pool, PoolConfig, PoolClient, types, ClientConfig, Client, Notification} from 'pg';
 import * as Debug from 'debug';
 import { Unauthorized, NotFound } from 'http-errors';
-import { QueryBuilder, ModelAction, Model } from './interfaces';
+import { QueryBuilder, ModelAction, Model, NotificationListener } from './interfaces';
 
 let debug = Debug('4kish-data-service');
 
@@ -13,7 +13,11 @@ types.setTypeParser(types.builtins.DATE, parseDate);
 
 export class DataService {
 
-  private config: PoolConfig;
+  private config: ClientConfig;
+  private notificationClient: Client;
+  private notificationListeners: Map<string, NotificationListener>;
+
+  private poolConfig: PoolConfig;
   private dataPool: Pool;
   private queryBuilders: Map<string, QueryBuilder>;
   private actions: Map<string, ModelAction>;
@@ -25,6 +29,9 @@ export class DataService {
       password: process.env.DB_PASS,
       user: process.env.DB_USER,
       database: process.env.DB_DATABASE,
+    };
+    this.poolConfig = {
+      ...this.config,
       max: 10,
       idleTimeoutMillis: 5 * 60 * 1000,
       connectionTimeoutMillis: 10 * 1000,
@@ -32,15 +39,38 @@ export class DataService {
 
     this.queryBuilders = new Map();
     this.actions = new Map();
+    this.notificationListeners = new Map();
   }
 
   async connect(){
-    this.dataPool = new Pool(this.config);
+    this.dataPool = new Pool(this.poolConfig);
     this.dataPool.on('error', (error)=>{
       debug(`pg unhandled error ${error}`);
     });
 
+    await this.notifications();
+
     debug(`connected to pg ${this.config.host}`);
+  }
+
+  async notifications(){
+    this.notificationClient = new Client(this.config);
+    await this.notificationClient.connect();
+
+    this.notificationClient.on('notification', async (msg: Notification) => {
+      const listener = this.notificationListeners.get(msg.channel);
+      if(listener){
+        listener.callback(msg.payload);
+      }
+      debug({ msg });
+    });
+
+    debug(`listening to table changes :D`);
+  }
+
+  registerNotificationListener(notificationListener: NotificationListener){
+    this.notificationClient.query(`LISTEN ${notificationListener.channel}`);
+    this.notificationListeners.set(notificationListener.channel, notificationListener);
   }
 
   registerQueryBuilder(queryBuilders: QueryBuilder[]): void{
@@ -96,7 +126,12 @@ export class DataService {
 
   async stop(){
     debug('stopping data service');
-    await this.dataPool.end();
+    try {
+      await this.dataPool?.end();
+    } catch (err) { }
+    try {
+      await this.notificationClient?.end();
+    } catch (err) { }
   }
 
   registerModelActions(models: Model[]): void{

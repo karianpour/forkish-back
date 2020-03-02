@@ -4,7 +4,7 @@ readEnv();
 import * as Debug from 'debug';
 import { Server } from './server';
 
-import { models as driverModels } from './repositories/driver-repository';
+import { models as driverModels, notifications as driverNotifications } from './repositories/driver-repository';
 // import { queries as operQueries, models as operModels } from './repositories/driver-repository';
 
 import {types} from 'pg';
@@ -29,6 +29,7 @@ async function main(){
   );
   // server.registerQueryBuilder(operQueries);
   server.registerModel(driverModels);
+  server.registerNotification(driverNotifications);
 }
 
 process.on('SIGINT', async function() {
