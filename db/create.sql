@@ -88,7 +88,7 @@ RETURNS NULL ON NULL INPUT;
 
 create domain pbl.mobile_number as text check (value  ~ '^09\d{9}$');
 
-create type pbl.car_type_enum as enum (
+create type pbl.vehicle_type_enum as enum (
   'sedan',
   'hatchback',
   'van'
@@ -128,19 +128,19 @@ create table pbl.driver (
   unique (mobile)
 );
 
-create table pbl.car (
+create table pbl.vehicle (
   id uuid primary key not null,
-  car_type pbl.car_type_enum not null,
+  vehicle_type pbl.vehicle_type_enum not null,
   plate_no text not null,
   capacity int not null
 );
 
-create table pbl.driver_car (
+create table pbl.driver_vehicle (
   id uuid primary key not null,
   driver_id uuid not null references pbl.driver (id),
-  car_id uuid not null references pbl.car (id),
+  vehicle_id uuid not null references pbl.vehicle (id),
   invalid boolean not null,
-  unique (driver_id, car_id)
+  unique (driver_id, vehicle_id)
 );
 
 create table pbl.driver_otp (
@@ -199,16 +199,24 @@ create type pbl.location as (
   address text
 );
 
+create type pbl.vehicle_type_offer as (
+  vehicle_type pbl.vehicle_type_enum,
+  price numeric(10, 2),
+  distance real,
+  time real
+);
+
 create table ride.passenger_request (
   id uuid primary key not null,
   passenger_id uuid not null references pbl.passenger (id),
   pickup pbl.location not null,
   destination pbl.location not null,
-  car_type pbl.car_type_enum not null,
-  price numeric(10, 2),
-  distance real,
-  time real,
-  requested_at timestamptz not null
+  offers pbl.vehicle_type_offer[] not null,
+  queried_at timestamptz not null,
+  requested_vehicle_type pbl.vehicle_type_enum null,
+  requested_at timestamptz null,
+  abondoned_at timestamptz null,
+  expired_at timestamptz null
 );
 
 create table archive.passenger_request_archive (
@@ -228,10 +236,12 @@ create table ride.driver_offer (
   id uuid primary key not null,
   driver_id uuid not null references pbl.driver (id),
   passenger_request_id uuid not null references ride.passenger_request (id),
+  vehicle_type pbl.vehicle_type_enum not null,
   offered_at timestamptz not null,
   driver_point public.geometry(point, 4326) null,
   driver_response pbl.driver_response_enum null,
   driver_responsed_at timestamptz null,
+  canceled_at timestamptz null,
   expired_at timestamptz null
 );
 
@@ -241,8 +251,7 @@ create table archive.driver_offer_archive (
 );
 
 create table ride.ride_progress (
-  id uuid primary key not null,
-  passenger_request_id uuid not null references ride.passenger_request (id),
+  id uuid primary key not null references ride.passenger_request (id),
   driver_id uuid not null references pbl.driver (id),
   driver_arrived_at timestamptz null,
   driver_arrived_point public.geometry(point, 4326) null,

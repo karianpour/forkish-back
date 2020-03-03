@@ -14,13 +14,13 @@ insert into pbl.passenger (id, mobile, firstname, lastname, created_at)
   values ('f473b9f0-8be3-4ee6-9c08-f5b8e8862559', '09121161998', 'کیوان', 'آرین‌پور', now());
 
 insert into ride.passenger_request
-  (id, passenger_id, pickup, destination, car_type, price, distance, time, requested_at)
+  (id, passenger_id, pickup, destination, offers, queried_at)
   values
   (
     'f473b9f0-8be3-4ee6-9c08-f5b8e8862559', 'f473b9f0-8be3-4ee6-9c08-f5b8e8862559',
     ('srid=4326;point(56 31)', 'کمند'),
     ('srid=4326;point(56.5 31.5)', 'کمند ۲'),
-    'sedan', 25000, 1000, 400, now()
+    array[('sedan', 25000, 1000, 400)]::pbl.vehicle_type_offer[], now()
   );
 */
 insert into ride.driver_offer 

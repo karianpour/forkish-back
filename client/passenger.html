@@ -7,14 +7,21 @@
       const mobile = '09121161998';
       const verificationCode = '1234';
 
-      let driver;
+      function uuidv4() {
+        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+          var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
+          return v.toString(16);
+        });
+      }
 
-      driver = JSON.parse(localStorage.getItem('driver') || null);
-      console.log({driver})
+      let passenger;
+
+      passenger = JSON.parse(localStorage.getItem('passenger') || null);
+      console.log({passenger})
 
 
-      async function fetchDriverOtp(){
-        const response = await fetch(url+'/driver/send_activation', {
+      async function fetchPassengerOtp(){
+        const response = await fetch(url+'/passenger/send_activation', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -31,8 +38,8 @@
         }
       }
 
-      async function verifyDriver(state){
-        const response = await fetch(url+'/driver/verify_activation', {
+      async function verifyPassenger(state){
+        const response = await fetch(url+'/passenger/verify_activation', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -45,27 +52,27 @@
         const responseJson = await response.json();
         if(responseJson){
           console.log('sendOtp succeed', {responseJson});
-          driver = responseJson;
-          localStorage.setItem('driver', JSON.stringify(driver));
+          passenger = responseJson;
+          localStorage.setItem('passenger', JSON.stringify(passenger));
         }else{
           console.log('sendOtp failed');
         }
       }
 
 
-      async function readDriver(){
-        const response = await fetch(url+'/driver/'+driver.id, {
+      async function readPassenger(){
+        const response = await fetch(url+'/passenger/'+passenger.id, {
           method: 'GET',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${driver.token}`,
+            'Authorization': `Bearer ${passenger.token}`,
           },
         });
         const responseJson = await response.json();
         if(responseJson){
-          console.log('read driver succeed', {responseJson});
+          console.log('read passenger succeed', {responseJson});
         }else{
-          console.log('read driver failed');
+          console.log('read passenger failed');
         }
       }
 
@@ -75,37 +82,53 @@
             method: 'initialState',
             payload: null,
           }));
-          console.log('I got an offer');
+          console.log('I am authenticated');
         }
       }
 
       function handleInitialState(result){
-        if(result.driverStatus){
-          console.log('I am');
-        }
-        offer = result.driverOffer;
+        passengerRequest = result.passengerRequest;
         rideProgress = result.rideProgress;
       }
 
-      function handleOffer(offer){
-        window.offer = offer;
-        console.log('I got an offer');
+      function handleQueryResult(passengerRequest){
+        window.passengerRequest = passengerRequest;
+        console.log('I have options');
       }
 
-      function handleAccept(rideProgress){
-        if(!rideProgress.failed){
-          window.rideProgress = rideProgress;
-          console.log('I got a ride');
+      function handleRideFound(rideProgress){
+        window.rideProgress = rideProgress;
+        console.log('I got a ride');
+      }
+
+      function handleDriverArrived(rideProgress){
+        console.log('Driver arrived');
+      }
+
+      function handleBoarded(rideProgress){
+        console.log('I am on board');
+      }
+
+      function handleLeft(rideProgress){
+        console.log('I left');
+        window.rideProgress = undefined;
+      }
+
+      function handleDriverCanceled(rideProgress){
+        console.log(`ride ${rideProgress.rideProgressId} is canceled`);
+        if(rideProgress?.rideProgressId === window.rideProgress?.rideProgressId){
+          window.rideProgress = null;
+          console.log('My ride is canceled');
         }
       }
 
 
       let wSocket;
   
-      function openDriverWs(){
+      function openPassengerWs(){
         try{
           console.log('connecting');
-          wSocket = new WebSocket(wsurl + '/driver/ws');
+          wSocket = new WebSocket(wsurl + '/passenger/ws');
           console.log('connected');
     
 
@@ -122,10 +145,18 @@
                   handleAuthenticated(json.payload);
                 }else if(json.method==='initialState'){
                   handleInitialState(json.payload);
-                }else if(json.method==='offer'){
-                  handleOffer(json.payload);
-                }else if(json.method==='acceptResult'){
-                  handleAccept(json.payload);
+                }else if(json.method==='queryResult'){
+                  handleQueryResult(json.payload);
+                }else if(json.method==='rideFound'){
+                  handleRideFound(json.payload);
+                }else if(json.method==='driverArrived'){
+                  handlehandleDriverArrived(json.payload);
+                }else if(json.method==='boarded'){
+                  handleBoarded(json.payload);
+                }else if(json.method==='left'){
+                  handleLeft(json.payload);
+                }else if(json.method==='passengerCanceled'){
+                  handleDriverCanceled(json.payload);
                 }
               }catch(err){
                 console.error(err);
@@ -137,7 +168,7 @@
             console.log('open');
             wSocket.send(JSON.stringify({
               method: 'authenticate',
-              payload: driver.token,
+              payload: passenger.token,
             }));
           }
           wSocket.onclose = function (event) {
@@ -152,91 +183,50 @@
         }
       }
   
-      function sendDriverReady(){
-        console.log('sending driver ready');
+      function sendQuery(){
+        console.log('sending request');
         wSocket.send(JSON.stringify({
-          method: 'ready',
+          method: 'query',
           payload: {
-            lat: 31,
-            lng: 56,
+            id: uuidv4(),
+            pickup: {
+              lat: 31,
+              lng: 56,
+              address: 'کمند',
+            },
+            destination:{
+              lat: 31.5,
+              lng: 56.5,
+              address: 'کمند',
+            },
           },
         }));
       }
   
-      function sendAccept(){
-        console.log('sending accept');
+      function sendRequest(){
+        console.log('sending request');
         wSocket.send(JSON.stringify({
-          method: 'accept',
+          method: 'request',
           payload: {
-            driverOfferId: offer.driverOfferId,
-            lat: 31,
-            lng: 56,
-          },
-        }));
-      }
-  
-      function sendReject(rejectReason){
-        console.log('sending accept');
-        wSocket.send(JSON.stringify({
-          method: 'reject',
-          payload: {
-            driverOfferId: offer.driverOfferId,
-            lat: 31,
-            lng: 56,
-            rejectReason,
-          },
-        }));
-      }
-  
-      function sendArrived(){
-        console.log('sending accept');
-        wSocket.send(JSON.stringify({
-          method: 'arrived',
-          payload: {
-            rideProgressId: rideProgress.rideProgressId,
-            lat: 31,
-            lng: 56,
-          },
-        }));
-      }
-  
-      function sendBoarded(){
-        console.log('sending accept');
-        wSocket.send(JSON.stringify({
-          method: 'boarded',
-          payload: {
-            rideProgressId: rideProgress.rideProgressId,
-            lat: 31,
-            lng: 56,
-          },
-        }));
-      }
-  
-      function sendLeft(){
-        console.log('sending accept');
-        wSocket.send(JSON.stringify({
-          method: 'left',
-          payload: {
-            rideProgressId: rideProgress.rideProgressId,
-            lat: 31,
-            lng: 56,
+            passengerRequestId: passengerRequest.id,
+            vehicleType: window.passengerRequest.offers[0].vehicleType,
           },
         }));
       }
   
       function sendCancel(){
-        console.log('sending accept');
+        console.log('sending cancel');
         wSocket.send(JSON.stringify({
           method: 'cancel',
           payload: {
-            rideProgressId: rideProgress.rideProgressId,
+            passengerRequestId: passengerRequest?.id || rideProgress?.rideProgressId,
             lat: 31,
             lng: 56,
           },
         }));
       }
   
-      function closeDriverWs(){
+      function closePassengerWs(){
         console.log('closing')
         wSocket.close();      
       }
@@ -266,24 +256,18 @@
   </script>
   </head>
   <body>
-    <button onclick="fetchDriverOtp()" >driver otp</button>
-    <button onclick="verifyDriver('wrong')" >driver wrong verify</button>
-    <button onclick="verifyDriver('nocode')" >driver empty verify</button>
-    <button onclick="verifyDriver()" >driver verify</button>
-    <button onclick="readDriver()" >read driver</button>
+    <button onclick="fetchPassengerOtp()" >passenger otp</button>
+    <button onclick="verifyPassenger('wrong')" >passenger wrong verify</button>
+    <button onclick="verifyPassenger('nocode')" >passenger empty verify</button>
+    <button onclick="verifyPassenger()" >passenger verify</button>
+    <button onclick="readPassenger()" >read passenger</button>
     <br/>
     <br/>
-    <button onclick="openDriverWs()" >driver open ws</button>
-    <button onclick="sendDriverReady()" >driver send ready ws</button>
-    <button onclick="sendAccept()" >send accept ws</button>
-    <button onclick="sendReject('cheap')" >send reject cheap ws</button>
-    <button onclick="sendReject('far')" >send reject far ws</button>
-    <button onclick="sendReject('misc')" >send reject misc ws</button>
-    <button onclick="sendArrived()" >send arrived ws</button>
-    <button onclick="sendBoarded()" >send boarded ws</button>
-    <button onclick="sendLeft()" >send left ws</button>
+    <button onclick="openPassengerWs()" >passenger open ws</button>
+    <button onclick="sendQuery()" >send query ws</button>
+    <button onclick="sendRequest()" >send request ws</button>
     <button onclick="sendCancel()" >send cancel ws</button>
-    <button onclick="closeDriverWs()" >driver close ws</button>
+    <button onclick="closePassengerWs()" >passenger close ws</button>
 
   </body>
 </html>

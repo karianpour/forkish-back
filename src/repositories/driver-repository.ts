@@ -30,7 +30,6 @@ const fields: string[] = snakeCasedFields([
 
 const rideProgressFields: string[] = snakeCasedFields([
   'id',
-  'passengerRequestId',
   'driverId',
   'driverArrivedAt',
   'driverArrivedPoint',
@@ -139,6 +138,10 @@ class Driver implements Model {
         address: () => '/offer',
         public: true,
         act: this.actOffer,
+      },{
+        address: () => '/passengerCanceled',
+        public: true,
+        act: this.actPassengerCanceled,
       },
     ]
   }
@@ -389,9 +392,10 @@ class Driver implements Model {
     {
       const result = await client.query({
         text: `
-          select o.id as driver_offer_id
+          select o.id
           from ride.driver_offer o
-          where o.driver_id = $1;
+          where o.driver_id = $1
+            and o.driver_responsed_at is null and o.expired_at is null;
         `,
         values: [ driver.id ],
       });
@@ -403,9 +407,13 @@ class Driver implements Model {
     {
       const result = await client.query({
         text: `
-          select rp.id as ride_progress_id
+          select rp.id
           from ride.ride_progress rp
-          where rp.driver_id = $1;
+          where rp.driver_id = $1
+            and rp.passenger_left_at is null
+            and rp.driver_canceled_at is null
+            and rp.passenger_canceled_at is null
+            ;
         `,
         values: [ driver.id ],
       });
@@ -465,14 +473,14 @@ class Driver implements Model {
       await client.query({
         text: `
           insert into log.driver_signal (driver_id, point, status, occured_at)
-            values ($1, public.ST_SetSRID( public.ST_Point( $3, $2), 4326), $4, now());
+            values ($1, pbl.to_point($2, $3), $4, now());
         `,
         values: [ driver.id, lat, lng, 'ready' ],
       });
       await client.query({
         text: `
           insert into ride.driver_status (driver_id, point, status)
-            values ($1, public.ST_SetSRID( public.ST_Point( $3, $2), 4326), $4)
+            values ($1, pbl.to_point($2, $3), $4)
             on conflict (driver_id) do update set
             point = excluded.point, status = excluded.status;
         `,
@@ -528,14 +536,14 @@ class Driver implements Model {
       await client.query({
         text: `
           insert into log.driver_signal (driver_id, point, status, occured_at)
-            values ($1, public.ST_SetSRID( public.ST_Point( $3, $2), 4326), $4, now());
+            values ($1, pbl.to_point($2, $3), $4, now());
         `,
         values: [ driver.id, lat, lng, 'off' ],
       });
       await client.query({
         text: `
           insert into ride.driver_status (driver_id, point, status)
-            values ($1, public.ST_SetSRID( public.ST_Point( $3, $2), 4326), $4)
+            values ($1, pbl.to_point($2, $3), $4)
             on conflict (driver_id) do update set
             point = excluded.point, status = excluded.status;
         `,
@@ -582,7 +590,7 @@ class Driver implements Model {
       throwError('lng', 'required', 'lng is missing!', 'pbl.lng');
     }
 
-    const rideProgressId = driverOfferId;
+    let id;
     {
       let driverOffer;
       {
@@ -624,11 +632,12 @@ class Driver implements Model {
           return false;
         }
       }
+      id = driverOffer.passengerRequestId;
 
       await client.query({
         text: `
           update ride.driver_offer set (driver_point, driver_response, driver_responsed_at)
-            = (public.ST_SetSRID( public.ST_Point( $4, $3), 4326), $5, now())
+            = (pbl.to_point($3, $4), $5, now())
           where driver_id = $1 and id = $2;
         `,
         values: [ driver.id, driverOfferId, lat, lng, 'accepted' ],
@@ -644,7 +653,7 @@ class Driver implements Model {
       await client.query({
         text: `
           insert into ride.driver_status (driver_id, point, status)
-            values ($1, public.ST_SetSRID( public.ST_Point( $3, $2), 4326), $4)
+            values ($1, pbl.to_point($2, $3), $4)
             on conflict (driver_id) do update set
             point = excluded.point, status = excluded.status;
         `,
@@ -652,15 +661,15 @@ class Driver implements Model {
       });
       await client.query({
         text: `
-          insert into ride.ride_progress (id, passenger_request_id, driver_id)
-            values ($1, $2, $3);
+          insert into ride.ride_progress (id, driver_id)
+            values ($1, $2);
         `,
-        values: [ rideProgressId, driverOffer.passengerRequestId, driver.id ],
+        values: [ driverOffer.passengerRequestId, driver.id ],
       });
   
     }
     return {
-      rideProgressId
+      id,
     };
   }
 
@@ -733,7 +742,7 @@ class Driver implements Model {
       const result = await client.query({
         text: `
           update ride.driver_offer set (driver_point, driver_response, driver_responsed_at)
-            = (public.ST_SetSRID( public.ST_Point( $4, $3), 4326), $5, now())
+            = (pbl.to_point($3, $4), $5, now())
           where driver_id = $1 and id = $2
           ;
         `,
@@ -811,7 +820,7 @@ class Driver implements Model {
       const result = await client.query({
         text: `
           update ride.ride_progress set (driver_canceled_at, driver_canceled_point)
-            = (now(), public.ST_SetSRID( public.ST_Point( $3, $2), 4326))
+            = (now(), pbl.to_point($2, $3))
           where id = $1
           ;
         `,
@@ -825,7 +834,7 @@ class Driver implements Model {
       await client.query({
         text: `
           insert into ride.driver_status (driver_id, point, status)
-            values ($1, public.ST_SetSRID( public.ST_Point( $3, $2), 4326), $4)
+            values ($1, pbl.to_point($2, $3), $4)
             on conflict (driver_id) do update set
             point = excluded.point, status = excluded.status;
         `,
@@ -901,7 +910,7 @@ class Driver implements Model {
       const result = await client.query({
         text: `
           update ride.ride_progress set (driver_arrived_at, driver_arrived_point)
-            = (now(), public.ST_SetSRID( public.ST_Point( $3, $2), 4326))
+            = (now(), pbl.to_point($2, $3))
           where id = $1
           ;
         `,
@@ -983,7 +992,7 @@ class Driver implements Model {
       const result = await client.query({
         text: `
           update ride.ride_progress set (passenger_onboard_at, passenger_onboard_point)
-            = (now(), public.ST_SetSRID( public.ST_Point( $3, $2), 4326))
+            = (now(), pbl.to_point($2, $3))
           where id = $1
           ;
         `,
@@ -1065,7 +1074,7 @@ class Driver implements Model {
       const result = await client.query({
         text: `
           update ride.ride_progress set (passenger_left_at, passenger_left_point)
-            = (now(), public.ST_SetSRID( public.ST_Point( $3, $2), 4326))
+            = (now(), pbl.to_point($2, $3))
           where id = $1
           ;
         `,
@@ -1079,7 +1088,7 @@ class Driver implements Model {
       await client.query({
         text: `
           insert into ride.driver_status (driver_id, point, status)
-            values ($1, public.ST_SetSRID( public.ST_Point( $3, $2), 4326), $4)
+            values ($1, pbl.to_point($2, $3), $4)
             on conflict (driver_id) do update set
             point = excluded.point, status = excluded.status;
         `,
@@ -1102,7 +1111,22 @@ class Driver implements Model {
       payload: {
         driverOfferId,
       },
-  }));
+    }));
+  }
+
+  actPassengerCanceled = async (client: PoolClient, actionParam: any) => {
+    const { driverId, passengerId, rideProgressId } = actionParam;
+
+
+    const conn = this.drivers.get(driverId);
+    if(!conn) return;
+
+    conn.socket.send(JSON.stringify({
+      method: 'passengerCanceled',
+      payload: {
+        rideProgressId,
+      },
+    }));
   }
 
   handleWs(conn: WSSocket,
@@ -1192,12 +1216,34 @@ class DriverOfferListener implements NotificationListener{
 
 }
 
+class PassengerCancelledListener implements NotificationListener{
+  private server: Server;
+
+  setServer(s: Server) { this.server = s; }
+  channel = 'ride_progress_canceled';
+
+  callback(payloadStr?: string){
+    const payload = JSON.parse(payloadStr);
+    const {driverId, passengerId, rideProgressId} = payload;
+    if(!driverId || !rideProgressId) return;
+    const actionParam = {
+      driverId,
+      passengerId,
+      rideProgressId,
+    }
+    this.server.getDataService().act('/driver/passengerCanceled', actionParam);
+  }
+
+
+}
+
 export const models: Model[] = [ 
   new Driver(),
 ];
 
 export const notifications: NotificationListener[] = [
   new DriverOfferListener(),
+  new PassengerCancelledListener(),
 ];
 
 const RejectReasonEnum = [

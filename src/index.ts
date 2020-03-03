@@ -5,6 +5,7 @@ import * as Debug from 'debug';
 import { Server } from './server';
 
 import { models as driverModels, notifications as driverNotifications } from './repositories/driver-repository';
+import { models as passengerModels, notifications as passengerNotifications } from './repositories/passenger-repository';
 // import { queries as operQueries, models as operModels } from './repositories/driver-repository';
 
 import {types} from 'pg';
@@ -30,6 +31,9 @@ async function main(){
   // server.registerQueryBuilder(operQueries);
   server.registerModel(driverModels);
   server.registerNotification(driverNotifications);
+
+  server.registerModel(passengerModels);
+  server.registerNotification(passengerNotifications);
 }
 
 process.on('SIGINT', async function() {
