@@ -271,6 +271,17 @@
         }));
       }
   
+      function sendPointUpdate(){
+        console.log('sending point update');
+        wSocket.send(JSON.stringify({
+          method: 'pointUpdate',
+          payload: {
+            lat: 31.5,
+            lng: 56,
+          },
+        }));
+      }
+  
       function closeDriverWs(){
         console.log('closing')
         wSocket.close();      
@@ -319,6 +330,7 @@
     <button onclick="sendBoarded()" >send boarded ws</button>
     <button onclick="sendLeft()" >send left ws</button>
     <button onclick="sendCancel()" >send cancel ws</button>
+    <button onclick="sendPointUpdate()" >send point update ws</button>
     <button onclick="closeDriverWs()" >driver close ws</button>
 
   </body>

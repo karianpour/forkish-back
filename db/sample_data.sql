@@ -33,3 +33,4 @@ insert into ride.driver_offer
     now(), 'srid=4326;point(56 31)'
   );
 
+update ride.driver_status set point = 'srid=4326;point(56 32)';

@@ -171,7 +171,8 @@ create table log.driver_signal (
 create table ride.driver_status (
   driver_id uuid primary key not null references pbl.driver (id),
   point public.geometry(point, 4326) not null,
-  status pbl.driver_status_enum not null
+  status pbl.driver_status_enum not null,
+  ride_progress_id uuid null
 );
 
 create table pbl.passenger (

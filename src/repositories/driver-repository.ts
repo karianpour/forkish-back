@@ -135,6 +135,10 @@ class Driver implements Model {
         public: false,
         act: this.actCancel,
       },{
+        address: () => '/pointUpdate',
+        public: false,
+        act: this.actPointUpdate,
+      },{
         address: () => '/offer',
         public: true,
         act: this.actOffer,
@@ -483,10 +487,10 @@ class Driver implements Model {
       });
       await client.query({
         text: `
-          insert into ride.driver_status (driver_id, point, status)
-            values ($1, pbl.to_point($2, $3), $4)
+          insert into ride.driver_status (driver_id, point, status, ride_progress_id)
+            values ($1, pbl.to_point($2, $3), $4, null)
             on conflict (driver_id) do update set
-            point = excluded.point, status = excluded.status;
+            point = excluded.point, status = excluded.status, ride_progress_id = null;
         `,
         values: [ driver.id, lat, lng, 'ready' ],
       });
@@ -546,10 +550,10 @@ class Driver implements Model {
       });
       await client.query({
         text: `
-          insert into ride.driver_status (driver_id, point, status)
-            values ($1, pbl.to_point($2, $3), $4)
+          insert into ride.driver_status (driver_id, point, status, ride_progress_id)
+            values ($1, pbl.to_point($2, $3), $4, null)
             on conflict (driver_id) do update set
-            point = excluded.point, status = excluded.status;
+            point = excluded.point, status = excluded.status, ride_progress_id = null;
         `,
         values: [ driver.id, lat, lng, 'off' ],
       });
@@ -657,12 +661,12 @@ class Driver implements Model {
       });
       await client.query({
         text: `
-          insert into ride.driver_status (driver_id, point, status)
-            values ($1, pbl.to_point($2, $3), $4)
+          insert into ride.driver_status (driver_id, point, status, ride_progress_id)
+            values ($1, pbl.to_point($2, $3), $4, $5)
             on conflict (driver_id) do update set
-            point = excluded.point, status = excluded.status;
+            point = excluded.point, status = excluded.status, ride_progress_id = excluded.ride_progress_id;
         `,
-        values: [ driver.id, lat, lng, 'occupied' ],
+        values: [ driver.id, lat, lng, 'occupied', driverOffer.passengerRequestId ],
       });
       await client.query({
         text: `
@@ -838,15 +842,48 @@ class Driver implements Model {
 
       await client.query({
         text: `
-          insert into ride.driver_status (driver_id, point, status)
-            values ($1, pbl.to_point($2, $3), $4)
+          insert into ride.driver_status (driver_id, point, status, ride_progress_id)
+            values ($1, pbl.to_point($2, $3), $4, null)
             on conflict (driver_id) do update set
-            point = excluded.point, status = excluded.status;
+            point = excluded.point, status = excluded.status, ride_progress_id = null;
         `,
         values: [ driver.id, lat, lng, 'ready' ],
       });
       
     }
+    return true;
+  }
+
+  async handlePointUpdate(payload: any, conn: WSSocket) {
+    try{
+      await this.server.getDataService().act(this.address()+'/pointUpdate', payload, conn.user);
+    }catch(err){
+      debug(err);
+    }
+  }
+
+  actPointUpdate = async (client: PoolClient, actionParam: any, driver: any) => {
+    const { lat, lng } = actionParam;
+
+    if (!driver?.id) {
+      throwError('driverId', 'required', 'driverId is missing!', 'pbl.driverId');
+    }
+    if (!lat) {
+      throwError('lat', 'required', 'lat is missing!', 'pbl.lat');
+    }
+    if (!lng) {
+      throwError('lng', 'required', 'lng is missing!', 'pbl.lng');
+    }
+
+    await client.query({
+      text: `
+        update ride.driver_status set point = pbl.to_point($2, $3)
+        where driver_id = $1
+        ;
+      `,
+      values: [ driver.id, lat, lng ],
+    });
+
     return true;
   }
 
@@ -1092,10 +1129,10 @@ class Driver implements Model {
   
       await client.query({
         text: `
-          insert into ride.driver_status (driver_id, point, status)
-            values ($1, pbl.to_point($2, $3), $4)
+          insert into ride.driver_status (driver_id, point, status, ride_progress_id)
+            values ($1, pbl.to_point($2, $3), $4, null)
             on conflict (driver_id) do update set
-            point = excluded.point, status = excluded.status;
+            point = excluded.point, status = excluded.status, ride_progress_id = null;
         `,
         values: [ driver.id, lat, lng, 'ready' ],
       });
@@ -1193,6 +1230,8 @@ class Driver implements Model {
             this.handleReject(payload, conn);
           }else if(method==='cancel'){
             this.handleCancel(payload, conn);
+          }else if(method==='pointUpdate'){
+            this.handlePointUpdate(payload, conn);
           }
         }
         

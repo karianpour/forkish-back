@@ -19,8 +19,29 @@ $$ language plpgsql;
 create trigger driver_offer_notify after insert or update on ride.driver_offer for each row execute procedure ride.driver_offer_notify();
 
 
---TODO , notify driver about offer cancelation and offer expiration
+drop trigger if exists driver_status_notify on ride.driver_status;
+drop function if exists ride.driver_status_notify;
 
+create or replace function ride.driver_status_notify() returns trigger as $$
+declare
+  passenger_id uuid;
+begin
+  if tg_op = 'UPDATE' then
+    if NEW.status = 'occupied' and NEW.ride_progress_id is not null then
+      select pr.passenger_id into passenger_id
+      from ride.ride_progress rp
+      inner join ride.passenger_request pr on rp.id = pr.id
+      where rp.id = NEW.ride_progress_id;
+      perform pg_notify('driver_moved',
+        json_build_object('driverId', NEW.driver_id, 'passengerId', passenger_id, 'point', json_build_object('lat', public.st_y(NEW.point),'lng', public.st_x(NEW.point)))::text);
+    end if;
+  end if;
+
+  return null;
+end;
+$$ language plpgsql;
+
+create trigger driver_status_notify after insert or update on ride.driver_status for each row execute procedure ride.driver_status_notify();
 
 drop trigger if exists ride_progress_notify on ride.ride_progress;
 drop function if exists ride.ride_progress_notify;

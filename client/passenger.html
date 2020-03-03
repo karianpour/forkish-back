@@ -114,6 +114,10 @@
         window.rideProgress = undefined;
       }
 
+      function handleDriverMoved(payload){
+        console.log('Driver moved', payload);
+      }
+
       function handleDriverCanceled(rideProgress){
         console.log(`ride ${rideProgress.rideProgressId} is canceled`);
         if(rideProgress?.rideProgressId === window.rideProgress?.rideProgressId){
@@ -155,6 +159,8 @@
                   handleBoarded(json.payload);
                 }else if(json.method==='left'){
                   handleLeft(json.payload);
+                }else if(json.method==='driverMoved'){
+                  handleDriverMoved(json.payload);
                 }else if(json.method==='passengerCanceled'){
                   handleDriverCanceled(json.payload);
                 }

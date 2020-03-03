@@ -131,6 +131,10 @@ class Passenger implements Model {
         address: () => '/driverCanceled',
         public: true,
         act: this.actDriverCanceled,
+      },{
+        address: () => '/driverMoved',
+        public: true,
+        act: this.actDriverMoved,
       },
     ]
   }
@@ -707,7 +711,7 @@ class Passenger implements Model {
 
         await client.query({
           text: `
-            update ride.driver_status set status = $2
+            update ride.driver_status set status = $2, ride_progress_id = null
             where driver_id = $1;
           `,
           values: [ driverId, 'ready' ],
@@ -788,6 +792,21 @@ class Passenger implements Model {
       method: 'driverCanceled',
       payload: {
         rideProgressId,
+      },
+    }));
+  }
+
+  actDriverMoved = async (client: PoolClient, actionParam: any) => {
+    const { driverId, passengerId, point } = actionParam;
+
+
+    const conn = this.passengers.get(passengerId);
+    if(!conn) return;
+
+    conn.socket.send(JSON.stringify({
+      method: 'driverMoved',
+      payload: {
+        point,
       },
     }));
   }
@@ -945,6 +964,25 @@ class DriverCanceledListener implements NotificationListener{
   }
 }
 
+class DriverMovedListener implements NotificationListener{
+  private server: Server;
+
+  setServer(s: Server) { this.server = s; }
+  channel = 'driver_moved';
+
+  callback(payloadStr?: string){
+    const payload = JSON.parse(payloadStr);
+    const {driverId, passengerId, point} = payload;
+    if(!driverId || !passengerId || !point) return;
+    const actionParam = {
+      driverId,
+      passengerId,
+      point,
+    }
+    this.server.getDataService().act('/passenger/driverMoved', actionParam);
+  }
+}
+
 export const models: Model[] = [ 
   new Passenger(),
 ];
@@ -955,6 +993,7 @@ export const notifications: NotificationListener[] = [
   new RideBoardedListener(),
   new RideLeftListener(),
   new DriverCanceledListener(),
+  new DriverMovedListener(),
 ];
 
 const RejectReasonEnum = [
