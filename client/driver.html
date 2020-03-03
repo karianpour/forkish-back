@@ -99,6 +99,11 @@
         console.log('I got an offer');
       }
 
+      function handleOfferDrawBack(offer){
+        window.offer = null;
+        console.log('The offer is gone');
+      }
+
       function handleAccept(rideProgress){
         if(!rideProgress.failed){
           window.rideProgress = rideProgress;
@@ -139,6 +144,8 @@
                   handleInitialState(json.payload);
                 }else if(json.method==='offer'){
                   handleOffer(json.payload);
+                }else if(json.method==='offerDrawBack'){
+                  handleOfferDrawBack(json.payload);
                 }else if(json.method==='acceptResult'){
                   handleAccept(json.payload);
                 }else if(json.method==='passengerCanceled'){
@@ -173,6 +180,17 @@
         console.log('sending driver ready');
         wSocket.send(JSON.stringify({
           method: 'ready',
+          payload: {
+            lat: 31,
+            lng: 56,
+          },
+        }));
+      }
+  
+      function sendDriverOff(){
+        console.log('sending driver off');
+        wSocket.send(JSON.stringify({
+          method: 'off',
           payload: {
             lat: 31,
             lng: 56,
@@ -292,6 +310,7 @@
     <br/>
     <button onclick="openDriverWs()" >driver open ws</button>
     <button onclick="sendDriverReady()" >driver send ready ws</button>
+    <button onclick="sendDriverOff()" >driver send off ws</button>
     <button onclick="sendAccept()" >send accept ws</button>
     <button onclick="sendReject('cheap')" >send reject cheap ws</button>
     <button onclick="sendReject('far')" >send reject far ws</button>

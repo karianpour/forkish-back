@@ -677,7 +677,7 @@ class Passenger implements Model {
           text: `
             update ride.driver_offer set canceled_at = now()
             where passenger_request_id = $1
-              and driver_responsed_at is null
+              and driver_respond_at is null
               and canceled_at is null
               and expired_at is null;
           `,

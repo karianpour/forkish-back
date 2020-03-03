@@ -139,6 +139,10 @@ class Driver implements Model {
         public: true,
         act: this.actOffer,
       },{
+        address: () => '/offerDrawBack',
+        public: true,
+        act: this.actOfferDrawBack,
+      },{
         address: () => '/passengerCanceled',
         public: true,
         act: this.actPassengerCanceled,
@@ -395,7 +399,7 @@ class Driver implements Model {
           select o.id
           from ride.driver_offer o
           where o.driver_id = $1
-            and o.driver_responsed_at is null and o.expired_at is null;
+            and o.driver_respond_at is null and o.expired_at is null;
         `,
         values: [ driver.id ],
       });
@@ -613,7 +617,7 @@ class Driver implements Model {
 
         const result = await client.query({
           text: `
-            select driver_id, passenger_request_id, driver_response, expired_at
+            select driver_id, passenger_request_id, driver_respond_at, canceled_at, expired_at
             from ride.driver_offer
             where id = $1;
           `,
@@ -625,8 +629,9 @@ class Driver implements Model {
         }
         driverOffer = camelCaseObject(result.rows[0]);
         if(
-          driverOffer.driverResponse != null
+          driverOffer.driverRespondAt != null
           || driverOffer.expiredAt != null
+          || driverOffer.canceledAt != null
           || driverOffer.driverId != driver.id
         ){
           return false;
@@ -636,7 +641,7 @@ class Driver implements Model {
 
       await client.query({
         text: `
-          update ride.driver_offer set (driver_point, driver_response, driver_responsed_at)
+          update ride.driver_offer set (driver_point, driver_response, driver_respond_at)
             = (pbl.to_point($3, $4), $5, now())
           where driver_id = $1 and id = $2;
         `,
@@ -741,7 +746,7 @@ class Driver implements Model {
 
       const result = await client.query({
         text: `
-          update ride.driver_offer set (driver_point, driver_response, driver_responsed_at)
+          update ride.driver_offer set (driver_point, driver_response, driver_respond_at)
             = (pbl.to_point($3, $4), $5, now())
           where driver_id = $1 and id = $2
           ;
@@ -1114,6 +1119,21 @@ class Driver implements Model {
     }));
   }
 
+  actOfferDrawBack = async (client: PoolClient, actionParam: any) => {
+    const { driverId, driverOfferId } = actionParam;
+
+
+    const conn = this.drivers.get(driverId);
+    if(!conn) return;
+
+    conn.socket.send(JSON.stringify({
+      method: 'offerDrawBack',
+      payload: {
+        driverOfferId,
+      },
+    }));
+  }
+
   actPassengerCanceled = async (client: PoolClient, actionParam: any) => {
     const { driverId, passengerId, rideProgressId } = actionParam;
 
@@ -1212,8 +1232,24 @@ class DriverOfferListener implements NotificationListener{
     }
     this.server.getDataService().act('/driver/offer', actionParam);
   }
+}
 
+class DriverOfferDrawBackListener implements NotificationListener{
+  private server: Server;
 
+  setServer(s: Server) { this.server = s; }
+  channel = 'driver_offer_drawback';
+
+  callback(payloadStr?: string){
+    const payload = JSON.parse(payloadStr);
+    const {driverId, driverOfferId} = payload;
+    if(!driverId || !driverOfferId) return;
+    const actionParam = {
+      driverId,
+      driverOfferId,
+    }
+    this.server.getDataService().act('/driver/offerDrawBack', actionParam);
+  }
 }
 
 class PassengerCancelledListener implements NotificationListener{
@@ -1243,6 +1279,7 @@ export const models: Model[] = [
 
 export const notifications: NotificationListener[] = [
   new DriverOfferListener(),
+  new DriverOfferDrawBackListener(),
   new PassengerCancelledListener(),
 ];
 

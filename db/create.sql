@@ -240,7 +240,7 @@ create table ride.driver_offer (
   offered_at timestamptz not null,
   driver_point public.geometry(point, 4326) null,
   driver_response pbl.driver_response_enum null,
-  driver_responsed_at timestamptz null,
+  driver_respond_at timestamptz null,
   canceled_at timestamptz null,
   expired_at timestamptz null
 );
