@@ -37,6 +37,10 @@ begin
     end if;
   end if;
 
+  if (tg_op = 'UPDATE' or tg_op = 'INSERT') then
+      perform pg_notify('driver_status', json_build_object('driverId', NEW.driver_id, 'status', NEW.status)::text);
+  end if;
+
   return null;
 end;
 $$ language plpgsql;
@@ -57,6 +61,8 @@ begin
   elsif tg_op = 'UPDATE' then
     if OLD.driver_arrived_at is null and NEW.driver_arrived_at is not null then
       perform pg_notify('ride_progress_arrived', json_build_object('rideProgressId', NEW.id, 'passengerId', passenger_id, 'driverId', NEW.driver_id)::text);
+    elsif OLD.passenger_got_it_at is null and NEW.passenger_got_it_at is not null then
+      perform pg_notify('ride_progress_confirmed', json_build_object('rideProgressId', NEW.id, 'passengerId', passenger_id, 'driverId', NEW.driver_id)::text);
     elsif OLD.passenger_onboard_at is null and NEW.passenger_onboard_at is not null then
       perform pg_notify('ride_progress_boarded', json_build_object('rideProgressId', NEW.id, 'passengerId', passenger_id, 'driverId', NEW.driver_id)::text);
     elsif OLD.passenger_left_at is null and NEW.passenger_left_at is not null then
@@ -82,13 +88,14 @@ create or replace function pbl.location_to_json(pbl.location) returns json as $$
   select json_build_object(
     'lat', public.st_y($1.point),
     'lng', public.st_x($1.point),
+    'name', $1.name,
     'address', $1.address
   );
 $$ language sql immutable;
 create cast (pbl.location as json) with function pbl.location_to_json(pbl.location) as assignment;
 
-create or replace function pbl.to_location(lat real, lng real, address text) returns pbl.location as $$
-  select (pbl.to_point(lat, lng), address)::pbl.location;
+create or replace function pbl.to_location(lat real, lng real, name text, address text) returns pbl.location as $$
+  select (pbl.to_point(lat, lng), name, address)::pbl.location;
 $$ language sql immutable;
 
 
@@ -97,7 +104,8 @@ create or replace function pbl.vehicle_type_offer_to_json(pbl.vehicle_type_offer
     'vehicleType', $1.vehicle_type,
     'price', $1.price,
     'distance', $1.distance,
-    'time', $1.time
+    'time', $1.time,
+    'enabled', $1.enabled
   );
 $$ language sql;
 create cast (pbl.vehicle_type_offer as json) with function pbl.vehicle_type_offer_to_json(pbl.vehicle_type_offer) as assignment;

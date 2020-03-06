@@ -28,6 +28,13 @@ const fields: string[] = snakeCasedFields([
   'photoUrl',
 ]);
 
+const vehicleField: string[] = snakeCasedFields([
+  'id',
+  'vehicleType',
+  'plateNo',
+  'capacity',
+]);
+
 const rideProgressFields: string[] = snakeCasedFields([
   'id',
   'driverId',
@@ -139,6 +146,10 @@ class Driver implements Model {
         public: false,
         act: this.actPointUpdate,
       },{
+        address: () => '/statusChanged',
+        public: true,
+        act: this.actStatusChanged,
+      },{
         address: () => '/offer',
         public: true,
         act: this.actOffer,
@@ -146,6 +157,10 @@ class Driver implements Model {
         address: () => '/offerDrawBack',
         public: true,
         act: this.actOfferDrawBack,
+      },{
+        address: () => '/passengerConfirmed',
+        public: true,
+        act: this.actPassengerConfirmed,
       },{
         address: () => '/passengerCanceled',
         public: true,
@@ -304,6 +319,18 @@ class Driver implements Model {
               const result = await client.query(query);
               driver = camelCaseObject(result.rows[0]);
             }
+            {
+              let select = sql.select(...vehicleField.map(f => 'v.'+f));
+              select = select.from('pbl.driver_vehicle dv');
+              select = select.join('pbl.vehicle v').on({'dv.vehicle_id': 'v.id'});
+              select = select.where({'dv.invalid': false});
+              select = select.where({'dv.driver_id': otp.driverId});
+          
+              const query = select.toParams();
+          
+              const result = await client.query(query);
+              driver.vehicles = camelCaseObject(result.rows);
+            }
             
             driver.token = this.server.getHttpServer().sign({ id: driver.id, roles: ['driver'] });
             {
@@ -382,7 +409,7 @@ class Driver implements Model {
   }
 
   actInitialState = async (client: PoolClient, actionParam: any, driver: any) => {
-    let driverStatus;
+    let status;
     {
       const result = await client.query({
         text: `
@@ -392,31 +419,46 @@ class Driver implements Model {
         `,
         values: [ driver.id ],
       });
-      if(result.rows.length) {
-        driverStatus = camelCaseObject(result.rows[0]);
+      if(result.rows.length > 0) {
+        status = camelCaseObject(result.rows[0]);
       };
     }
-    let driverOffer;
+    let offer;
     {
       const result = await client.query({
         text: `
-          select o.id
+          select o.id, pr.pickup::json, pr.destination::json, od.price, od.distance, od.time
           from ride.driver_offer o
+          inner join ride.passenger_request pr on o.passenger_request_id = pr.id
+          inner join unnest(pr.offers) od on pr.requested_vehicle_type = od.vehicle_type
           where o.driver_id = $1
-            and o.driver_respond_at is null and o.expired_at is null;
+            and o.driver_respond_at is null and o.expired_at is null and o.canceled_at is null;
         `,
         values: [ driver.id ],
       });
-      if(result.rows.length) {
-        driverOffer = camelCaseObject(result.rows[0]);
+      if(result.rows.length > 0) {
+        offer = camelCaseObject(result.rows[0]);
       };
     }
-    let rideProgress;
+    let ride;
     {
       const result = await client.query({
         text: `
-          select rp.id
-          from ride.ride_progress rp
+          select pr.id, pr.pickup::json, pr.destination::json, od.price, od.distance, od.time,
+            json_build_object(
+              'firstname', p.firstname,
+              'lastname', p.lastname,
+              'mobile', p.mobile
+            ) as passenger,
+            true as accepted,
+            rp.driver_arrived_at is not null as arrived,
+            rp.passenger_got_it_at is not null as confirmed,
+            rp.passenger_onboard_at is not null as pickedup,
+            rp.passenger_left_at is not null as accomplished
+          from ride.passenger_request pr
+          inner join ride.ride_progress rp on pr.id = rp.id
+          inner join unnest(pr.offers) od on pr.requested_vehicle_type = od.vehicle_type
+          inner join pbl.passenger p on pr.passenger_id = p.id
           where rp.driver_id = $1
             and rp.passenger_left_at is null
             and rp.driver_canceled_at is null
@@ -425,14 +467,14 @@ class Driver implements Model {
         `,
         values: [ driver.id ],
       });
-      if(result.rows.length) {
-        rideProgress = camelCaseObject(result.rows[0]);
+      if(result.rows.length > 0) {
+        ride = camelCaseObject(result.rows[0]);
       };
     }
     return {
-      driverStatus,
-      driverOffer,
-      rideProgress,
+      status,
+      offer,
+      ride,
     };
   }
 
@@ -455,13 +497,22 @@ class Driver implements Model {
   }
 
   actReady = async (client: PoolClient, actionParam: any, driver: any) => {
-    const { lat, lng } = actionParam;
+    const { vehicleId, lat, lng, heading, speed } = actionParam;
 
+    if (!vehicleId) {
+      throwError('vehicleId', 'required', 'vehicleId is missing!', 'pbl.vehicleId');
+    }
     if (!lat) {
       throwError('lat', 'required', 'lat is missing!', 'pbl.lat');
     }
     if (!lng) {
       throwError('lng', 'required', 'lng is missing!', 'pbl.lng');
+    }
+    if (!heading) {
+      throwError('heading', 'required', 'heading is missing!', 'pbl.heading');
+    }
+    if (!speed) {
+      throwError('speed', 'required', 'speed is missing!', 'pbl.speed');
     }
 
     {
@@ -480,19 +531,28 @@ class Driver implements Model {
       // }
       await client.query({
         text: `
-          insert into log.driver_signal (driver_id, point, status, occured_at)
-            values ($1, pbl.to_point($2, $3), $4, now());
+          insert into log.driver_signal (driver_id, occured_at, payload)
+            values ($1, now(), $2);
         `,
-        values: [ driver.id, lat, lng, 'ready' ],
+        values: [ driver.id, 
+          {
+            vehicleId,
+            point:{ lat, lng },
+            heading,
+            speed,
+            status: 'ready',
+          },
+        ],
       });
       await client.query({
         text: `
-          insert into ride.driver_status (driver_id, point, status, ride_progress_id)
-            values ($1, pbl.to_point($2, $3), $4, null)
+          insert into ride.driver_status (driver_id, vehicle_id, point, heading, speed,
+            status, ride_progress_id)
+            values ($1, $2, pbl.to_point($3, $4), $5, $6, $7, null)
             on conflict (driver_id) do update set
             point = excluded.point, status = excluded.status, ride_progress_id = null;
         `,
-        values: [ driver.id, lat, lng, 'ready' ],
+        values: [ driver.id, vehicleId, lat, lng, heading, speed, 'ready' ],
       });
   
     }
@@ -518,7 +578,7 @@ class Driver implements Model {
   }
 
   actOff = async (client: PoolClient, actionParam: any, driver: any) => {
-    const { lat, lng } = actionParam;
+    const { lat, lng, heading, speed } = actionParam;
 
     if (!lat) {
       throwError('lat', 'required', 'lat is missing!', 'pbl.lat');
@@ -526,38 +586,73 @@ class Driver implements Model {
     if (!lng) {
       throwError('lng', 'required', 'lng is missing!', 'pbl.lng');
     }
+    if (!heading) {
+      throwError('heading', 'required', 'heading is missing!', 'pbl.heading');
+    }
+    if (!speed) {
+      throwError('speed', 'required', 'speed is missing!', 'pbl.speed');
+    }
+
 
     {
-      // const result = await client.query({
-      //   text: `
-      //     select do.id, do.code, do.activation_failed_count
-      //     from driver d
-      //     inner join driver_otp do
-      //     where !used and do.mobile = $1;
-      //   `,
-      //   values: [ mobile ],
-      // });
+      const result = await client.query({
+        text: `
+          select o.id
+          from ride.driver_offer o
+          inner join ride.passenger_request pr on o.passenger_request_id = pr.id
+          inner join unnest(pr.offers) od on pr.requested_vehicle_type = od.vehicle_type
+          where o.driver_id = $1
+            and o.driver_respond_at is null and o.expired_at is null and o.canceled_at is null;
+        `,
+        values: [ driver.id ],
+      });
+      if(result.rows.length > 0) {
+        return false;
+      }
+    }
+    {
+      const result = await client.query({
+        text: `
+          select pr.id
+          from ride.passenger_request pr
+          inner join ride.ride_progress rp on pr.id = rp.id
+          where rp.driver_id = $1
+            and rp.passenger_left_at is null
+            and rp.driver_canceled_at is null
+            and rp.passenger_canceled_at is null
+            ;
+        `,
+        values: [ driver.id ],
+      });
+      if(result.rows.length > 0) {
+        return false;
+      }
+    }
 
-      // if(result.rows.length === 0){
-      //   return false;
-      // }
+    {
       await client.query({
         text: `
-          insert into log.driver_signal (driver_id, point, status, occured_at)
-            values ($1, pbl.to_point($2, $3), $4, now());
+          insert into log.driver_signal (driver_id, occured_at, payload)
+            values ($1, now(), $2);
         `,
-        values: [ driver.id, lat, lng, 'off' ],
+        values: [ driver.id, 
+          {
+            point:{ lat, lng },
+            heading,
+            speed,
+            status: 'off',
+          },
+        ],
       });
       await client.query({
         text: `
-          insert into ride.driver_status (driver_id, point, status, ride_progress_id)
-            values ($1, pbl.to_point($2, $3), $4, null)
-            on conflict (driver_id) do update set
-            point = excluded.point, status = excluded.status, ride_progress_id = null;
+          update ride.driver_status set 
+            (point, heading, speed, status, ride_progress_id)
+            = (pbl.to_point($2, $3), $4, $5, $6, null)
+            where driver_id = $1;
         `,
-        values: [ driver.id, lat, lng, 'off' ],
+        values: [ driver.id, lat, lng, heading, speed, 'off' ],
       });
-  
     }
     return true;
   }
@@ -583,7 +678,7 @@ class Driver implements Model {
   }
 
   actAccept = async (client: PoolClient, actionParam: any, driver: any) => {
-    const { driverOfferId, lat, lng } = actionParam;
+    const { driverOfferId, lat, lng, heading, speed } = actionParam;
 
     if (!driver?.id) {
       throwError('driverId', 'required', 'driverId is missing!', 'pbl.driverId');
@@ -596,6 +691,12 @@ class Driver implements Model {
     }
     if (!lng) {
       throwError('lng', 'required', 'lng is missing!', 'pbl.lng');
+    }
+    if (!heading) {
+      throwError('heading', 'required', 'heading is missing!', 'pbl.heading');
+    }
+    if (!speed) {
+      throwError('speed', 'required', 'speed is missing!', 'pbl.speed');
     }
 
     let id;
@@ -621,7 +722,7 @@ class Driver implements Model {
 
         const result = await client.query({
           text: `
-            select driver_id, passenger_request_id, driver_respond_at, canceled_at, expired_at
+            select driver_id, vehicle_id, passenger_request_id, driver_respond_at, canceled_at, expired_at
             from ride.driver_offer
             where id = $1;
           `,
@@ -661,25 +762,40 @@ class Driver implements Model {
       });
       await client.query({
         text: `
-          insert into ride.driver_status (driver_id, point, status, ride_progress_id)
-            values ($1, pbl.to_point($2, $3), $4, $5)
-            on conflict (driver_id) do update set
-            point = excluded.point, status = excluded.status, ride_progress_id = excluded.ride_progress_id;
+          update ride.driver_status set 
+            (point, heading, speed, status, ride_progress_id)
+            = (pbl.to_point($2, $3), $4, $5, $6, $7)
+            where driver_id = $1;
         `,
-        values: [ driver.id, lat, lng, 'occupied', driverOffer.passengerRequestId ],
+        values: [ driver.id, lat, lng, heading, speed, 'occupied', driverOffer.passengerRequestId ],
       });
       await client.query({
         text: `
-          insert into ride.ride_progress (id, driver_id)
-            values ($1, $2);
+          insert into ride.ride_progress (id, driver_id, vehicle_id)
+            values ($1, $2, $3);
         `,
-        values: [ driverOffer.passengerRequestId, driver.id ],
+        values: [ driverOffer.passengerRequestId, driver.id, driverOffer.vehicleId ],
       });
   
     }
-    return {
-      id,
-    };
+    
+    const result = await client.query({
+      text: `
+        select pr.id as ride_id, pr.pickup::json, pr.destination::json, od.price, od.distance, od.time,
+          json_build_object('firstname', p.firstname, 'lastname', p.lastname, 'mobile', p.mobile) as passenger
+        from ride.passenger_request pr
+        inner join ride.ride_progress rp on pr.id = rp.id
+        inner join unnest(pr.offers) od on pr.requested_vehicle_type = od.vehicle_type
+        inner join pbl.passenger p on pr.passenger_id = p.id
+        where pr.id = $1;
+      `,
+      values: [ id ],
+    });
+
+    if(result.rows.length === 0){
+      return false;
+    }
+    return camelCaseObject(result.rows[0]);
   }
 
   async handleReject(payload: any, conn: WSSocket) {
@@ -784,7 +900,7 @@ class Driver implements Model {
   }
 
   actCancel = async (client: PoolClient, actionParam: any, driver: any) => {
-    const { rideProgressId, lat, lng } = actionParam;
+    const { rideProgressId, lat, lng, heading, speed } = actionParam;
 
     if (!driver?.id) {
       throwError('driverId', 'required', 'driverId is missing!', 'pbl.driverId');
@@ -797,6 +913,12 @@ class Driver implements Model {
     }
     if (!lng) {
       throwError('lng', 'required', 'lng is missing!', 'pbl.lng');
+    }
+    if (!heading) {
+      throwError('heading', 'required', 'heading is missing!', 'pbl.heading');
+    }
+    if (!speed) {
+      throwError('speed', 'required', 'speed is missing!', 'pbl.speed');
     }
 
     {
@@ -842,12 +964,12 @@ class Driver implements Model {
 
       await client.query({
         text: `
-          insert into ride.driver_status (driver_id, point, status, ride_progress_id)
-            values ($1, pbl.to_point($2, $3), $4, null)
-            on conflict (driver_id) do update set
-            point = excluded.point, status = excluded.status, ride_progress_id = null;
+          update ride.driver_status set 
+            (point, heading, speed, status, ride_progress_id)
+            = (pbl.to_point($2, $3), $4, $5, $6, null)
+            where driver_id = $1;
         `,
-        values: [ driver.id, lat, lng, 'ready' ],
+        values: [ driver.id, lat, lng, heading, speed, 'ready' ],
       });
       
     }
@@ -863,7 +985,7 @@ class Driver implements Model {
   }
 
   actPointUpdate = async (client: PoolClient, actionParam: any, driver: any) => {
-    const { lat, lng } = actionParam;
+    const { lat, lng, heading, speed } = actionParam;
 
     if (!driver?.id) {
       throwError('driverId', 'required', 'driverId is missing!', 'pbl.driverId');
@@ -874,14 +996,35 @@ class Driver implements Model {
     if (!lng) {
       throwError('lng', 'required', 'lng is missing!', 'pbl.lng');
     }
+    if (!heading) {
+      throwError('heading', 'required', 'heading is missing!', 'pbl.heading');
+    }
+    if (!speed) {
+      throwError('speed', 'required', 'speed is missing!', 'pbl.speed');
+    }
 
     await client.query({
       text: `
-        update ride.driver_status set point = pbl.to_point($2, $3)
+        insert into log.driver_signal (driver_id, occured_at, payload)
+          values ($1, now(), $2);
+      `,
+      values: [ driver.id, 
+        {
+          point:{ lat, lng },
+          heading,
+          speed,
+          status: 'ready',
+        }
+      ],
+    });
+
+    await client.query({
+      text: `
+        update ride.driver_status set (point, heading, speed) = (pbl.to_point($2, $3), $4, $5)
         where driver_id = $1
         ;
       `,
-      values: [ driver.id, lat, lng ],
+      values: [ driver.id, lat, lng, heading, speed ],
     });
 
     return true;
@@ -1069,7 +1212,7 @@ class Driver implements Model {
   }
 
   actLeft = async (client: PoolClient, actionParam: any, driver: any) => {
-    const { rideProgressId, lat, lng } = actionParam;
+    const { rideProgressId, lat, lng, heading, speed } = actionParam;
 
     if (!driver?.id) {
       throwError('driverId', 'required', 'driverId is missing!', 'pbl.driverId');
@@ -1082,6 +1225,12 @@ class Driver implements Model {
     }
     if (!lng) {
       throwError('lng', 'required', 'lng is missing!', 'pbl.lng');
+    }
+    if (!heading) {
+      throwError('heading', 'required', 'heading is missing!', 'pbl.heading');
+    }
+    if (!speed) {
+      throwError('speed', 'required', 'speed is missing!', 'pbl.speed');
     }
 
     {
@@ -1129,21 +1278,51 @@ class Driver implements Model {
   
       await client.query({
         text: `
-          insert into ride.driver_status (driver_id, point, status, ride_progress_id)
-            values ($1, pbl.to_point($2, $3), $4, null)
-            on conflict (driver_id) do update set
-            point = excluded.point, status = excluded.status, ride_progress_id = null;
+          update ride.driver_status set
+            (point, heading, speed, status, ride_progress_id)
+            = (pbl.to_point($2, $3), $4, $5, $6, null)
+            where driver_id = $1;
         `,
-        values: [ driver.id, lat, lng, 'ready' ],
+        values: [ driver.id, lat, lng, heading, speed, 'ready' ],
       });
 
     }
     return true;
   }
 
+  actStatusChanged = async (client: PoolClient, actionParam: any) => {
+    const { driverId, status } = actionParam;
+
+
+    const conn = this.drivers.get(driverId);
+    if(!conn) return;
+
+    conn.socket.send(JSON.stringify({
+      method: 'statusChanged',
+      payload: {
+        status,
+      },
+    }));
+  }
+
   actOffer = async (client: PoolClient, actionParam: any) => {
     const { driverId, driverOfferId } = actionParam;
 
+    const result = await client.query({
+      text: `
+        select o.id, pr.pickup::json, pr.destination::json, od.price, od.distance, od.time
+        from ride.driver_offer o
+        inner join ride.passenger_request pr on o.passenger_request_id = pr.id
+        inner join unnest(pr.offers) od on pr.requested_vehicle_type = od.vehicle_type
+        where o.id = $1;
+      `,
+      values: [ driverOfferId ],
+    });
+
+    if(result.rows.length === 0){
+      return;
+    }
+    const offer = camelCaseObject(result.rows[0]);
 
     const conn = this.drivers.get(driverId);
     if(!conn) return;
@@ -1151,7 +1330,7 @@ class Driver implements Model {
     conn.socket.send(JSON.stringify({
       method: 'offer',
       payload: {
-        driverOfferId,
+        offer,
       },
     }));
   }
@@ -1167,6 +1346,20 @@ class Driver implements Model {
       method: 'offerDrawBack',
       payload: {
         driverOfferId,
+      },
+    }));
+  }
+
+  actPassengerConfirmed = async (client: PoolClient, actionParam: any) => {
+    const { driverId, rideProgressId } = actionParam;
+
+    const conn = this.drivers.get(driverId);
+    if(!conn) return;
+
+    conn.socket.send(JSON.stringify({
+      method: 'passengerConfirmed',
+      payload: {
+        rideProgressId,
       },
     }));
   }
@@ -1209,7 +1402,7 @@ class Driver implements Model {
         }
         if(method==='authenticate'){
           this.handleAuthenticate(payload, conn);
-        }else {
+        }else{
           if(!conn.user){
             conn.socket.send('authentication required!');
           }else if(method==='initialState'){
@@ -1255,6 +1448,23 @@ class Driver implements Model {
   }
 
 }
+class DriverStatusListener implements NotificationListener{
+  private server: Server;
+
+  setServer(s: Server) { this.server = s; }
+  channel = 'driver_status';
+
+  callback(payloadStr?: string){
+    const payload = JSON.parse(payloadStr);
+    const {driverId, status} = payload;
+    if(!driverId || !status) return;
+    const actionParam = {
+      driverId,
+      status,
+    }
+    this.server.getDataService().act('/driver/statusChanged', actionParam);
+  }
+}
 class DriverOfferListener implements NotificationListener{
   private server: Server;
 
@@ -1291,6 +1501,25 @@ class DriverOfferDrawBackListener implements NotificationListener{
   }
 }
 
+class PassengerConfirmedListener implements NotificationListener{
+  private server: Server;
+
+  setServer(s: Server) { this.server = s; }
+  channel = 'ride_progress_confirmed';
+
+  callback(payloadStr?: string){
+    const payload = JSON.parse(payloadStr);
+    const {driverId, passengerId, rideProgressId} = payload;
+    if(!driverId || !passengerId || !rideProgressId) return;
+    const actionParam = {
+      driverId,
+      passengerId,
+      rideProgressId,
+    }
+    this.server.getDataService().act('/driver/passengerConfirmed', actionParam);
+  }
+}
+
 class PassengerCancelledListener implements NotificationListener{
   private server: Server;
 
@@ -1317,8 +1546,10 @@ export const models: Model[] = [
 ];
 
 export const notifications: NotificationListener[] = [
+  new DriverStatusListener(),
   new DriverOfferListener(),
   new DriverOfferDrawBackListener(),
+  new PassengerConfirmedListener(),
   new PassengerCancelledListener(),
 ];
 

@@ -163,16 +163,19 @@ create type pbl.driver_status_enum as enum (
 create table log.driver_signal (
   id bigserial primary key not null,
   driver_id uuid not null references pbl.driver (id),
-  point public.geometry(point, 4326) not null,
-  status pbl.driver_status_enum not null,
-  occured_at timestamptz null
+  occured_at timestamptz null,
+  payload json not null
 );
 
 create table ride.driver_status (
   driver_id uuid primary key not null references pbl.driver (id),
+  vehicle_id uuid not null references pbl.vehicle (id),
   point public.geometry(point, 4326) not null,
+  heading int not null,
+  speed int not null,
   status pbl.driver_status_enum not null,
-  ride_progress_id uuid null
+  ride_progress_id uuid null,
+  foreign key (driver_id, vehicle_id) references pbl.driver_vehicle (driver_id, vehicle_id)
 );
 
 create table pbl.passenger (
@@ -197,6 +200,7 @@ create table pbl.passenger_otp (
 
 create type pbl.location as (
   point public.geometry(point, 4326),
+  name text,
   address text
 );
 
@@ -204,7 +208,8 @@ create type pbl.vehicle_type_offer as (
   vehicle_type pbl.vehicle_type_enum,
   price numeric(10, 2),
   distance real,
-  time real
+  time real,
+  enabled boolean
 );
 
 create table ride.passenger_request (
@@ -236,6 +241,7 @@ create type pbl.driver_response_enum as enum (
 create table ride.driver_offer (
   id uuid primary key not null,
   driver_id uuid not null references pbl.driver (id),
+  vehicle_id uuid not null references pbl.vehicle (id),
   passenger_request_id uuid not null references ride.passenger_request (id),
   vehicle_type pbl.vehicle_type_enum not null,
   offered_at timestamptz not null,
@@ -243,7 +249,8 @@ create table ride.driver_offer (
   driver_response pbl.driver_response_enum null,
   driver_respond_at timestamptz null,
   canceled_at timestamptz null,
-  expired_at timestamptz null
+  expired_at timestamptz null,
+  foreign key (driver_id, vehicle_id) references pbl.driver_vehicle (driver_id, vehicle_id)
 );
 
 create table archive.driver_offer_archive (
@@ -254,8 +261,10 @@ create table archive.driver_offer_archive (
 create table ride.ride_progress (
   id uuid primary key not null references ride.passenger_request (id),
   driver_id uuid not null references pbl.driver (id),
+  vehicle_id uuid not null references pbl.vehicle (id),
   driver_arrived_at timestamptz null,
   driver_arrived_point public.geometry(point, 4326) null,
+  passenger_got_it_at timestamptz null,
   passenger_onboard_at timestamptz null,
   passenger_onboard_point public.geometry(point, 4326) null,
   passenger_left_at timestamptz null,
@@ -263,7 +272,8 @@ create table ride.ride_progress (
   driver_canceled_at timestamptz null,
   driver_canceled_point public.geometry(point, 4326) null,
   passenger_canceled_at timestamptz null,
-  passenger_canceled_point public.geometry(point, 4326) null
+  passenger_canceled_point public.geometry(point, 4326) null,
+  foreign key (driver_id, vehicle_id) references pbl.driver_vehicle (driver_id, vehicle_id)
 );
 
 create table archive.ride_progress_archive (

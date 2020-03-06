@@ -120,7 +120,7 @@ export class HttpServer {
       debug(`listen on ${address}`);
 
       this.pongInteval = setInterval(() => {
-        debug('pongInterval');
+        // debug('pongInterval');
         (this.fastifyServer as any).websocketServer.clients.forEach((ws) => {
           if (ws.isAlive === false) return ws.terminate();
        

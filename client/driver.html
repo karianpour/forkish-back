@@ -94,6 +94,10 @@
         rideProgress = result.rideProgress;
       }
 
+      function handleStatusChanged(status){
+        console.log('In new status', status);
+      }
+
       function handleOffer(offer){
         window.offer = offer;
         console.log('I got an offer');
@@ -142,6 +146,8 @@
                   handleAuthenticated(json.payload);
                 }else if(json.method==='initialState'){
                   handleInitialState(json.payload);
+                }else if(json.method==='statusChanged'){
+                  handleStatusChanged(json.payload);
                 }else if(json.method==='offer'){
                   handleOffer(json.payload);
                 }else if(json.method==='offerDrawBack'){

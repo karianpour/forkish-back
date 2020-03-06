@@ -108,6 +108,10 @@ class Passenger implements Model {
         public: false,
         act: this.actRequest,
       },{
+        address: () => '/confirm',
+        public: false,
+        act: this.actConfirm,
+      },{
         address: () => '/cancel',
         public: false,
         act: this.actCancel,
@@ -371,17 +375,18 @@ class Passenger implements Model {
     {
       const result = await client.query({
         text: `
-          select pr.id, pr.pickup::json, pr.destination::json, pr.offers::json
+          select pr.id, rp.id is null as requesting_ride, pr.pickup::json, pr.destination::json, pr.offers::json
           from ride.passenger_request pr
+          left join ride.ride_progress rp on pr.id = rp.id
           where pr.passenger_id = $1
-            and pr.requested_at is null
+            and (pr.requested_at is null or rp.id is null)
             and pr.abondoned_at is null
             and pr.expired_at is null
           ;
       `,
         values: [ passenger.id ],
       });
-      if(result.rows.length) {
+      if(result.rows.length > 0) {
         passengerRequest = camelCaseObject(result.rows[0]);
       };
     }
@@ -389,9 +394,53 @@ class Passenger implements Model {
     {
       const result = await client.query({
         text: `
-          select rp.id as ride_progress_id
+          select rp.id,
+            json_build_object(
+              'driver',
+              json_build_object(
+                'firstname', d.firstname,
+                'lastname', d.lastname,
+                'mobile', d.mobile
+              ),
+              'vehicle',
+              json_build_object(
+                'plateNo', v.plate_no,
+                'vehicleType', v.vehicle_type
+              ),
+              'price', od.price,
+              'paymentType', 'cash',
+              'distance', od.distance,
+              'time', od.time
+            ) as ride,
+            json_build_object(
+              'distance', 1000,
+              'eta', 300,
+              'location', json_build_object(
+                'lat', public.st_y(ds.point),
+                'lng', public.st_x(ds.point)
+              ),
+              'heading', ds.heading,
+              'speed', ds.speed,
+              'rideReady', rp.driver_arrived_at is not null,
+              'passengerReady', rp.passenger_got_it_at is not null
+            ) as ride_approach,
+            json_build_object(
+              'onboard', rp.passenger_onboard_at is not null,
+              'location', json_build_object(
+                'lat', public.st_y(ds.point),
+                'lng', public.st_x(ds.point)
+              ),
+              'heading', ds.heading,
+              'speed', ds.speed
+            ) as ride_progress,
+            pr.pickup::json, pr.destination::json
           from ride.ride_progress rp
+          inner join ride.driver_offer o on o.passenger_request_id = rp.id
           inner join ride.passenger_request pr on rp.id = pr.id
+          inner join unnest(pr.offers) od on pr.requested_vehicle_type = od.vehicle_type
+          inner join ride.driver_status ds on rp.driver_id = ds.driver_id
+          inner join pbl.driver d on rp.driver_id = d.id
+          inner join pbl.vehicle v on rp.vehicle_id = v.id
           where pr.passenger_id = $1
             and rp.passenger_left_at is null
             and rp.driver_canceled_at is null
@@ -400,7 +449,7 @@ class Passenger implements Model {
       `,
         values: [ passenger.id ],
       });
-      if(result.rows.length) {
+      if(result.rows.length > 0) {
         rideProgress = camelCaseObject(result.rows[0]);
       };
     }
@@ -440,6 +489,9 @@ class Passenger implements Model {
     if (!pickup.lng) {
       throwError('lng', 'required', 'lng is missing!', 'pbl.lng');
     }
+    if (!pickup.name) {
+      throwError('name', 'required', 'name is missing!', 'pbl.name');
+    }
     if (!pickup.address) {
       throwError('address', 'required', 'address is missing!', 'pbl.address');
     }
@@ -448,6 +500,9 @@ class Passenger implements Model {
     }
     if (!destination.lng) {
       throwError('lng', 'required', 'lng is missing!', 'pbl.lng');
+    }
+    if (!destination.name) {
+      throwError('name', 'required', 'name is missing!', 'pbl.name');
     }
     if (!destination.address) {
       throwError('address', 'required', 'address is missing!', 'pbl.address');
@@ -469,18 +524,26 @@ class Passenger implements Model {
       // }
 
       const offers = [
-        {vehicleType: 'sedan', price: 25000, distance: 3000, time: 400},
+        {vehicleType: 'sedan', price: 25000, distance: 3000, time: 400, enabled: true},
+        {vehicleType: 'van', price: 35000, distance: 3000, time: 400, enabled: false},
       ];
 
-      const startIndex = 8;
+      const startIndex = 10;
       const arrayStr = [];
       const valuesArray = [];
       offers.forEach((offer, i)=>{
-        arrayStr.push(`($${startIndex + i * 4 + 1}, $${startIndex + i * 4 + 2}, $${startIndex + i * 4 + 3}, $${startIndex + i * 4 + 4})`);
+        arrayStr.push(`(
+          $${startIndex + i * 5 + 1},
+          $${startIndex + i * 5 + 2},
+          $${startIndex + i * 5 + 3},
+          $${startIndex + i * 5 + 4},
+          $${startIndex + i * 5 + 5}
+        )`);
         valuesArray.push(offer.vehicleType);
         valuesArray.push(offer.price);
         valuesArray.push(offer.distance);
         valuesArray.push(offer.time);
+        valuesArray.push(offer.enabled);
       });
 
 
@@ -490,8 +553,8 @@ class Passenger implements Model {
             (id, passenger_id, pickup, destination, offers, queried_at)
             values
             ($1, $2, 
-              pbl.to_location($3, $4, $5), 
-              pbl.to_location($6, $7, $8), 
+              pbl.to_location($3, $4, $5, $6), 
+              pbl.to_location($7, $8, $9, $10), 
               array[
                 ${arrayStr.join(',\n')}
               ]::pbl.vehicle_type_offer[],
@@ -501,8 +564,8 @@ class Passenger implements Model {
         `,
         values: [
           id, passenger.id, 
-          pickup.lat, pickup.lng, pickup.address,
-          destination.lat, destination.lng, destination.address,
+          pickup.lat, pickup.lng, pickup.name, pickup.address,
+          destination.lat, destination.lng, destination.name, destination.address,
           ...valuesArray,
         ],
       });
@@ -566,13 +629,62 @@ class Passenger implements Model {
       await client.query({
         text: `
           insert into ride.driver_offer
-            (id, driver_id, passenger_request_id, vehicle_type, offered_at, driver_point)
-          select public.gen_random_uuid(), ds.driver_id, pr.id, pr.requested_vehicle_type, now(), ds.point
+            (id, driver_id, vehicle_id, passenger_request_id, vehicle_type, offered_at, driver_point)
+          select public.gen_random_uuid(), ds.driver_id, ds.vehicle_id, pr.id, pr.requested_vehicle_type, now(), ds.point
           from ride.passenger_request pr
           inner join ride.driver_status ds on ds.status = 'ready' --TODO filter driver
           where pr.id = $1;
         `,
         values: [ passengerRequestId ],
+      });
+    }
+    return true;
+  }
+
+  async handleConfirm(payload: any, conn: WSSocket) {
+    try{
+      const result = await this.server.getDataService().act(this.address()+'/confirm', payload, conn.user);
+      conn.socket.send(JSON.stringify({
+        method: 'confirmResult',
+        payload: result,
+      }));
+    }catch(err){
+      debug(err);
+      conn.socket.send(JSON.stringify({
+        method: 'confirmResult',
+        payload: {
+          failed: true,
+        },
+      }));
+    }
+  }
+
+  actConfirm = async (client: PoolClient, actionParam: any, passenger: any) => {
+    const { rideProgressId, vehicleType } = actionParam;
+
+    if (!rideProgressId) {
+      throwError('rideProgressId', 'required', 'rideProgressId is missing!', 'pbl.rideProgressId');
+    }
+
+    {
+      const result = await client.query({
+        text: `
+          select passenger_got_it_at
+          from ride.ride_progress
+          where id = $1 and passenger_got_it_at is null
+          for update;
+        `,
+        values: [ rideProgressId ],
+      });
+      if(result.rows.length === 0){
+        return false;
+      }
+      await client.query({
+        text: `
+          update ride.ride_progress set passenger_got_it_at = now()
+          where id = $1;
+        `,
+        values: [ rideProgressId ],
       });
     }
     return true;
@@ -724,6 +836,64 @@ class Passenger implements Model {
   actRideFound = async (client: PoolClient, actionParam: any) => {
     const { driverId, passengerId, rideProgressId } = actionParam;
 
+    const result = await client.query({
+      text: `
+        select rp.id,
+          json_build_object(
+            'driver',
+            json_build_object(
+              'firstname', d.firstname,
+              'lastname', d.lastname,
+              'mobile', d.mobile
+            ),
+            'vehicle',
+            json_build_object(
+              'plateNo', v.plate_no,
+              'vehicleType', v.vehicle_type
+            ),
+            'price', od.price,
+            'paymentType', 'cash',
+            'distance', od.distance,
+            'time', od.time
+          ) as ride,
+          json_build_object(
+            'distance', 1000,
+            'eta', 300,
+            'location', json_build_object(
+              'lat', public.st_y(ds.point),
+              'lng', public.st_x(ds.point)
+            ),
+            'heading', ds.heading,
+            'speed', ds.speed,
+            'rideReady', rp.driver_arrived_at is not null,
+            'passengerReady', rp.passenger_got_it_at is not null
+          ) as ride_approach,
+          json_build_object(
+            'onboard', rp.passenger_onboard_at is not null,
+            'location', json_build_object(
+              'lat', public.st_y(ds.point),
+              'lng', public.st_x(ds.point)
+            ),
+            'heading', ds.heading,
+            'speed', ds.speed
+          ) as ride_progress,
+          pr.pickup::json, pr.destination::json
+        from ride.ride_progress rp
+        inner join ride.driver_offer o on o.passenger_request_id = rp.id
+        inner join ride.passenger_request pr on rp.id = pr.id
+        inner join unnest(pr.offers) od on pr.requested_vehicle_type = od.vehicle_type
+        inner join ride.driver_status ds on rp.driver_id = ds.driver_id
+        inner join pbl.driver d on rp.driver_id = d.id
+        inner join pbl.vehicle v on rp.vehicle_id = v.id
+        where rp.id = $1;
+      `,
+      values: [ rideProgressId ],
+    });
+
+    if(result.rows.length === 0){
+      return;
+    }
+    const offer = camelCaseObject(result.rows[0]);
 
     const conn = this.passengers.get(passengerId);
     if(!conn) return;
@@ -731,7 +901,7 @@ class Passenger implements Model {
     conn.socket.send(JSON.stringify({
       method: 'rideFound',
       payload: {
-        rideProgressId,
+        offer,
       },
     }));
   }
@@ -843,6 +1013,8 @@ class Passenger implements Model {
             this.handleQuery(payload, conn);
           }else if(method==='request'){
             this.handleRequest(payload, conn);
+          }else if(method==='confirm'){
+            this.handleConfirm(payload, conn);
           }else if(method==='cancel'){
             this.handleCancel(payload, conn);
           }
