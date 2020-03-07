@@ -14,7 +14,7 @@ import { snakeCasedFields } from "../utils/dbUtils";
 import { sendActivationSMS } from "../services/sms";
 import { heartbeat, WSSocket } from "../services/http-server";
  
-let debug = Debug('4kish-driver');
+let debug = Debug('4kish-passenger');
 
 export const BookAccessRoles = ['owner', 'adviser', 'bookkeeper'];
 

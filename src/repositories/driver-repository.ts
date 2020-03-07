@@ -513,10 +513,10 @@ class Driver implements Model {
     if (!lng) {
       throwError('lng', 'required', 'lng is missing!', 'pbl.lng');
     }
-    if (!heading) {
+    if (!heading && heading!==0) {
       throwError('heading', 'required', 'heading is missing!', 'pbl.heading');
     }
-    if (!speed) {
+    if (!speed && speed!==0) {
       throwError('speed', 'required', 'speed is missing!', 'pbl.speed');
     }
 
@@ -591,10 +591,10 @@ class Driver implements Model {
     if (!lng) {
       throwError('lng', 'required', 'lng is missing!', 'pbl.lng');
     }
-    if (!heading) {
+    if (!heading && heading!==0) {
       throwError('heading', 'required', 'heading is missing!', 'pbl.heading');
     }
-    if (!speed) {
+    if (!speed && speed!==0) {
       throwError('speed', 'required', 'speed is missing!', 'pbl.speed');
     }
 
@@ -697,10 +697,10 @@ class Driver implements Model {
     if (!lng) {
       throwError('lng', 'required', 'lng is missing!', 'pbl.lng');
     }
-    if (!heading) {
+    if (!heading && heading!==0) {
       throwError('heading', 'required', 'heading is missing!', 'pbl.heading');
     }
-    if (!speed) {
+    if (!speed && speed!==0) {
       throwError('speed', 'required', 'speed is missing!', 'pbl.speed');
     }
 
@@ -919,10 +919,10 @@ class Driver implements Model {
     if (!lng) {
       throwError('lng', 'required', 'lng is missing!', 'pbl.lng');
     }
-    if (!heading) {
+    if (!heading && heading!==0) {
       throwError('heading', 'required', 'heading is missing!', 'pbl.heading');
     }
-    if (!speed) {
+    if (!speed && speed!==0) {
       throwError('speed', 'required', 'speed is missing!', 'pbl.speed');
     }
 
@@ -1001,10 +1001,10 @@ class Driver implements Model {
     if (!lng) {
       throwError('lng', 'required', 'lng is missing!', 'pbl.lng');
     }
-    if (!heading) {
+    if (!heading && heading!==0) {
       throwError('heading', 'required', 'heading is missing!', 'pbl.heading');
     }
-    if (!speed) {
+    if (!speed && speed!==0) {
       throwError('speed', 'required', 'speed is missing!', 'pbl.speed');
     }
 
@@ -1231,10 +1231,10 @@ class Driver implements Model {
     if (!lng) {
       throwError('lng', 'required', 'lng is missing!', 'pbl.lng');
     }
-    if (!heading) {
+    if (!heading && heading!==0) {
       throwError('heading', 'required', 'heading is missing!', 'pbl.heading');
     }
-    if (!speed) {
+    if (!speed && speed!==0) {
       throwError('speed', 'required', 'speed is missing!', 'pbl.speed');
     }
 
