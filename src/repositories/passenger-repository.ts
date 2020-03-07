@@ -625,18 +625,7 @@ class Passenger implements Model {
         `,
         values: [ passengerRequestId, vehicleType ],
       });
-      //TODO the driver should be filtered to be close, only limmited amount
-      await client.query({
-        text: `
-          insert into ride.driver_offer
-            (id, driver_id, vehicle_id, passenger_request_id, vehicle_type, offered_at, driver_point)
-          select public.gen_random_uuid(), ds.driver_id, ds.vehicle_id, pr.id, pr.requested_vehicle_type, now(), ds.point
-          from ride.passenger_request pr
-          inner join ride.driver_status ds on ds.status = 'ready' --TODO filter driver
-          where pr.id = $1;
-        `,
-        values: [ passengerRequestId ],
-      });
+      this.server.getDataService().act('/driver/tryOffer', { passengerRequestId });
     }
     return true;
   }
@@ -709,8 +698,8 @@ class Passenger implements Model {
   }
 
   actCancel = async (client: PoolClient, actionParam: any, passenger: any) => {
-    const { passengerRequestId, lat, lng } = actionParam;
-    const rideProgressId = passengerRequestId;// it is the same
+    const { rideProgressId, lat, lng } = actionParam;
+    const passengerRequestId = rideProgressId;// it is the same
 
     if (!passenger?.id) {
       throwError('passengerId', 'required', 'passengerId is missing!', 'pbl.passengerId');

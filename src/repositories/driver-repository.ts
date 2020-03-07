@@ -165,6 +165,10 @@ class Driver implements Model {
         address: () => '/passengerCanceled',
         public: true,
         act: this.actPassengerCanceled,
+      },{
+        address: () => '/tryOffer',
+        public: true,
+        act: this.actTryOffer,
       },
     ]
   }
@@ -481,6 +485,7 @@ class Driver implements Model {
   async handleReady(payload: any, conn: WSSocket) {
     try{
       const result = await this.server.getDataService().act(this.address()+'/ready', payload, conn.user);
+      this.server.getDataService().act(this.address()+'/tryOffer', { forAll: true });
       conn.socket.send(JSON.stringify({
         method: 'readyResult',
         payload: result,
@@ -1377,6 +1382,50 @@ class Driver implements Model {
         rideProgressId,
       },
     }));
+  }
+
+  actTryOffer = async (client: PoolClient, actionParam: any) => {
+    const { passengerRequestId, forAll } = actionParam;
+
+
+    if(passengerRequestId){
+      //TODO the driver should be filtered to be close, only limmited amount
+      await client.query({
+        text: `
+          insert into ride.driver_offer
+            (id, driver_id, vehicle_id, passenger_request_id, vehicle_type, offered_at, driver_point)
+          select public.gen_random_uuid(), ds.driver_id, ds.vehicle_id, pr.id, pr.requested_vehicle_type, now(), ds.point
+          from ride.passenger_request pr
+          inner join ride.driver_status ds on ds.status = 'ready' --TODO filter driver
+          where pr.id = $1;
+        `,
+        values: [ passengerRequestId ],
+      });
+    }else if(forAll){
+      //TODO the driver should be filtered to be close, only limmited amount
+      //TODO the driver which already rejected a ride should not be notified again
+      await client.query({
+        text: `
+          insert into ride.driver_offer
+            (id, driver_id, vehicle_id, passenger_request_id, vehicle_type, offered_at, driver_point)
+          select public.gen_random_uuid(), ds.driver_id, ds.vehicle_id, pr.id, pr.requested_vehicle_type, now(), ds.point
+          from ride.passenger_request pr
+          inner join ride.driver_status ds on ds.status = 'ready' --TODO filter driver
+          where
+            pr.requested_at is not null and pr.abondoned_at is null and pr.expired_at is null
+            and pr.id not in (
+              select id from ride.ride_progress
+            )
+            and pr.id not in (
+              select passenger_request_id
+              from ride.driver_offer
+              where driver_response is null and canceled_at is null and expired_at is null
+            )
+          ;
+        `,
+        values: [  ],
+      });
+    }
   }
 
   handleWs(conn: WSSocket,
