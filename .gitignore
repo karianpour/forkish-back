@@ -3,3 +3,5 @@
 /.vscode
 /dist
 /dev
+dist.tar.gz
+test.pg*

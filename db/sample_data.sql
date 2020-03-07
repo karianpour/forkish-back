@@ -1,12 +1,3 @@
-delete from ride.ride_progress;
-delete from ride.driver_offer;
-/*
-delete from ride.passenger_request;
-delete from pbl.driver;
-delete from pbl.passenger;
-*/
-
-/*
 insert into pbl.driver (id, mobile, firstname, lastname, firstname_en, lastname_en, photo_url, created_at) 
   values ('f473b9f0-8be3-4ee6-9c08-f5b8e8862559', '09121161998', 'کیوان', 'آرین‌پور', 'Kayvan', 'Arianpour', 'http://', now());
 insert into pbl.vehicle (id, vehicle_type, plate_no, capacity) 
@@ -15,26 +6,16 @@ insert into pbl.driver_vehicle (id, driver_id, vehicle_id, invalid)
   values ('f473b9f0-8be3-4ee6-9c08-f5b8e8868559', 'f473b9f0-8be3-4ee6-9c08-f5b8e8862559', 'f473b9f0-8be3-4ee6-9c08-f5b8e8864559', false);
 
 insert into pbl.passenger (id, mobile, firstname, lastname, created_at) 
-  values ('f473b9f0-8be3-4ee6-9c08-f5b8e8862559', '09121161998', 'کیوان', 'آرین‌پور', now());
+  values ('f473b9f0-8be3-4ee6-9c08-f5b8e8860559', '09121161998', 'کیوان', 'آرین‌پور', now());
 
-insert into ride.passenger_request
-  (id, passenger_id, pickup, destination, offers, queried_at)
-  values
-  (
-    'f473b9f0-8be3-4ee6-9c08-f5b8e8862559', 'f473b9f0-8be3-4ee6-9c08-f5b8e8862559',
-    ('srid=4326;point(56 31)', 'کمند'),
-    ('srid=4326;point(56.5 31.5)', 'کمند ۲'),
-    array[('sedan', 25000, 1000, 400)]::pbl.vehicle_type_offer[], now()
-  );
-*/
-insert into ride.driver_offer 
-  (id, driver_id, passenger_request_id, offered_at, driver_point)
-  values
-  (
-    'f473b9f0-8be3-4ee6-9c08-f5b8e8862559',
-    'f473b9f0-8be3-4ee6-9c08-f5b8e8862559',
-    'f473b9f0-8be3-4ee6-9c08-f5b8e8862559',
-    now(), 'srid=4326;point(56 31)'
-  );
 
-update ride.driver_status set point = 'srid=4326;point(56 32)';
+
+insert into pbl.driver (id, mobile, firstname, lastname, firstname_en, lastname_en, photo_url, created_at) 
+  values ('f473b9f0-8be3-4ee6-9c08-f5b8e8862560', '09124385396', 'مصطفی', 'خلیلی', 'Mostafa', 'Khalili', 'http://', now());
+insert into pbl.vehicle (id, vehicle_type, plate_no, capacity) 
+  values ('f473b9f0-8be3-4ee6-9c08-f5b8e8864560', 'sedan', '43215/22', 4);
+insert into pbl.driver_vehicle (id, driver_id, vehicle_id, invalid) 
+  values ('f473b9f0-8be3-4ee6-9c08-f5b8e8868560', 'f473b9f0-8be3-4ee6-9c08-f5b8e8862560', 'f473b9f0-8be3-4ee6-9c08-f5b8e8864560', false);
+
+insert into pbl.passenger (id, mobile, firstname, lastname, created_at) 
+  values ('f473b9f0-8be3-4ee6-9c08-f5b8e8860560', '09124385396', 'مصطفی', 'خلیلی', now());

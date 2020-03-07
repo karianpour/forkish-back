@@ -6,6 +6,9 @@
 
 for upgrade visit : https://www.kostolansky.sk/posts/upgrading-to-postgresql-12/
 
+for postgis:
+  apt install postgresql-12-postgis-3 postgresql-12-postgis-3-scripts
+
 
 please install the following extension:
   https://github.com/furstenheim/is_jsonb_valid
