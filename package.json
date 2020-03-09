@@ -11,7 +11,7 @@
   ],
   "private": true,
   "scripts": {
-    "build": "rm -rf ./dist && tsc --build ./tsconfig.build.json",
+    "build": "rm -rf ./dist && tsc --build ./tsconfig.json",
     "start": "TS_NODE_FILES=true node --inspect=5858 -r ts-node/register ./src/index.ts",
     "start:watch": "nodemon",
     "build-tsc": "tsc",
