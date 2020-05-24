@@ -7,6 +7,7 @@ The driver mobile app is here[https://github.com/karianpour/forkish-driver]
 The passenger mobile app is here[https://github.com/karianpour/forkish-app]
 
 Here you can see a video of the apps in action:
+
 [![Demo](https://img.youtube.com/vi/3bYX-b0S-2U/0.jpg)](https://www.youtube.com/watch?v=3bYX-b0S-2U)
 
 
