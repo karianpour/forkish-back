@@ -4,7 +4,7 @@ set -e
 echo 'deploying TEST forkish on karianpour server'
 
 echo 'building back'
-# npm run build
+npm run build
 rm -f dist.tar.gz
 tar -czf dist.tar.gz ./dist
 echo 'done :D'

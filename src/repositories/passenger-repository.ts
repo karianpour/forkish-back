@@ -400,7 +400,10 @@ class Passenger implements Model {
               json_build_object(
                 'firstname', d.firstname,
                 'lastname', d.lastname,
-                'mobile', d.mobile
+                'firstnameEn', d.firstname_en,
+                'lastnameEn', d.lastname_en,
+                'mobile', d.mobile,
+                'score', 4
               ),
               'vehicle',
               json_build_object(
@@ -833,8 +836,11 @@ class Passenger implements Model {
             json_build_object(
               'firstname', d.firstname,
               'lastname', d.lastname,
-              'mobile', d.mobile
-            ),
+              'firstnameEn', d.firstname_en,
+              'lastnameEn', d.lastname_en,
+              'mobile', d.mobile,
+              'score', 4
+          ),
             'vehicle',
             json_build_object(
               'plateNo', v.plate_no,

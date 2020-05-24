@@ -10,13 +10,13 @@ declare module "fastify" {
     authenticate(): void;
   }
 
-  export interface FastifyRequest<
-    HttpRequest,
-    Query = fastify.DefaultQuery,
-    Params = fastify.DefaultParams,
-    Headers = fastify.DefaultHeaders,
-    Body = fastify.DefaultBody
-  > {
-    user(): any;
-  }
+  // export interface FastifyRequest<
+  //   HttpRequest,
+  //   Query = fastify.DefaultQuery,
+  //   Params = fastify.DefaultParams,
+  //   Headers = fastify.DefaultHeaders,
+  //   Body = fastify.DefaultBody
+  // > {
+  //   user(): any;
+  // }
 }
